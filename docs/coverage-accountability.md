@@ -21,6 +21,7 @@ No file ships without a bucket.
 | `pii_guard/auth.py` | Unit-tested + Contract-pinned | `tests/unit/test_auth.py` (single key backward-compat, named multi-key API_KEYS, get_caller_name timing-safe, list_key_names, generate_key, header precedence, edge cases), `tests/characterization/test_api_contract.py` |
 | `pii_guard/config.py` | Contract-pinned | `tests/characterization/test_env_vars.py` (all env var names including API_KEYS, PSEUDO_SECRET, PII_SANDBOX_MODE, PII_DECODE_ENCODED), `tests/characterization/test_api_contract.py` (schemas endpoint, 12 profiles, config/reload endpoint) |
 | `workers/conductor_pii_worker.py` | Contract-pinned | `tests/characterization/test_conductor_contracts.py` (task names, TASK_HANDLERS dict, input param names) |
+| `workers/__init__.py` | Compile-verified | (no runtime behavior — empty package marker) |
 | `k8s/deployment.yaml` | Contract-pinned | `tests/characterization/test_k8s_manifest.py` (namespace, port, TLS, middleware, imagePullSecret; readiness probe path /health/deep) |
 | `workflows/pii_scan_and_sanitize.json` | Contract-pinned | `tests/characterization/test_conductor_contracts.py` (required fields, task reference name, task order) |
 | `workflows/pii_ai_preflight_gate.json` | Contract-pinned | `tests/characterization/test_conductor_contracts.py` (required fields, preflight-before-sanitize order, JQ transform task) |
@@ -40,7 +41,10 @@ python -c "
 import os, sys
 src = [f for f in (
     list(__import__('pathlib').Path('.').rglob('*.py'))
-) if '.venv' not in str(f) and '__pycache__' not in str(f) and 'test_' not in str(f)]
+) if '.venv' not in str(f)
+  and '__pycache__' not in str(f)
+  and 'tests' not in str(f).split('/')   # exclude all test infrastructure
+]
 table = open('docs/coverage-accountability.md').read()
 missing = [f for f in src if str(f) not in table]
 if missing:
