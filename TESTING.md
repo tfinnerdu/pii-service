@@ -264,7 +264,78 @@ Expected: preflight examples run, showing safe/unsafe results and recommendation
 
 ## §8 Authentication (Production)
 
+### §8.1 Single key (backward-compatible)
+
 1. Call `/api/v1/scan` without a key: expect 401
 2. Call with wrong key: expect 403
 3. Call with correct key in `Authorization: Bearer <key>`: expect 200
-4. Verify `/health` returns 200 without any key (K8s probe must work without auth)
+4. Verify `/health`, `/health/deep`, `/metrics` return 200 without any key (K8s probes must work without auth)
+
+### §8.2 Named multi-key (API_KEYS)
+
+1. Set `API_KEYS="n8n-prod:key1,conductor:key2"` in `.env`
+2. Start service — log should show: `API key authentication enabled (2 key(s): conductor, n8n-prod)`
+3. Call `/api/v1/scan` with `X-API-Key: key1` — expect 200
+4. Call `/api/v1/scan` with `X-API-Key: key2` — expect 200
+5. Verify audit log shows `"caller_name": "n8n-prod"` for key1 and `"caller_name": "conductor"` for key2
+6. Call with either key and check `GET /api/v1/keys` — expect `{ "keys": ["conductor", "n8n-prod"], "count": 2 }`
+7. Note: key VALUES are never returned by any endpoint
+
+### §8.3 Key generator
+
+```
+POST http://localhost:5900/api/v1/keys/generate
+X-API-Key: <existing-key>
+Body: { "name": "ocr-service", "prefix": "sk_ocr" }
+```
+
+Expected: `{ "name": "ocr-service", "key": "sk_ocr_...", "add_to_api_keys": "ocr-service:sk_ocr_...", "instructions": "..." }`
+
+Verify: copy `add_to_api_keys` value into `API_KEYS` in `.env`, then `POST /api/v1/config/reload`. New key should now be accepted.
+
+---
+
+## §9 OCR Service Integration
+
+**Preconditions:** OCR service running on port 8089, pii-service running on port 5900.
+
+### §9.1 Direct endpoint smoke test
+
+```
+POST http://localhost:5900/api/v1/scan/ocr
+X-API-Key: <key>
+Body: {
+  "pages": [
+    { "page_number": 1, "text": "Student D1234567, SSN 123-45-6789", "confidence": 94.1 },
+    { "page_number": 2, "text": "GPA 3.45, enrolled CSCI 301", "confidence": 88.0 }
+  ],
+  "mode": "mask",
+  "low_confidence_threshold": 70.0,
+  "correlation_id": "test-job-001"
+}
+```
+
+Expected:
+- `page_count: 2`, `pages_with_pii: 1`, `highest_risk: "CRITICAL"`
+- Page 1: `pii_found: true`, `low_confidence_warning: false`, `sanitized_text` contains `[STUDENT_ID]` and `[US_SSN]`
+- Page 2: `pii_found: false`, `low_confidence_warning: false`
+- `correlation_id: "test-job-001"` echoed in response
+
+### §9.2 Low-confidence warning
+
+Upload a page with `"confidence": 45.0` and `"low_confidence_threshold": 70.0`.
+Expected: `low_confidence_warning: true` on that page. PII may be unreliable due to OCR errors.
+
+### §9.3 Correlation ID absent when not provided
+
+Call without `correlation_id` in body.
+Expected: `correlation_id` key is absent from response (not null — completely absent).
+
+### §9.4 Through OCR service (end-to-end)
+
+1. Upload a scanned PDF with student SSN to OCR service (`POST http://localhost:8089/api/v1/ocr`)
+2. Verify OCR service calls pii-service internally (check pii-service logs for `/api/v1/scan/ocr` hit)
+3. Verify OCR service response includes `pii_scan.pages_with_pii` and per-page sanitized text
+4. Verify `caller_name: "ocr-service"` in pii-service audit log
+
+**Last verified:** TBD (verify after OCR service wiring is complete)

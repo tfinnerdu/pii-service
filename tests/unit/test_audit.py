@@ -74,3 +74,32 @@ class TestAuditStats:
         before = audit.get_stats()["total_requests"]
         _emit({"action": "masked", "policy_name": "ai_prompt"})
         assert audit.get_stats()["total_requests"] == before + 1
+
+    def test_emit_with_subject_id_and_destination(self):
+        before = audit.get_stats()["total_requests"]
+        _emit({"subject_id": "hashed-pidm-abc", "destination": "openai-gpt4"})
+        assert audit.get_stats()["total_requests"] == before + 1
+
+    def test_emit_with_caller_name(self):
+        """caller_name (named API key label) must be accepted without error."""
+        before = audit.get_stats()["total_requests"]
+        _emit({"caller_name": "n8n-prod"})
+        assert audit.get_stats()["total_requests"] == before + 1
+
+    def test_emit_with_correlation_id(self):
+        """correlation_id (opaque caller-supplied GUID) must be accepted without error."""
+        before = audit.get_stats()["total_requests"]
+        _emit({"correlation_id": "banner-pidm-1234567"})
+        assert audit.get_stats()["total_requests"] == before + 1
+
+    def test_emit_caller_name_none_accepted(self):
+        """None caller_name (auth disabled or key unnamed) must not raise."""
+        before = audit.get_stats()["total_requests"]
+        _emit({"caller_name": None})
+        assert audit.get_stats()["total_requests"] == before + 1
+
+    def test_emit_correlation_id_none_accepted(self):
+        """None correlation_id (caller did not supply one) must not raise."""
+        before = audit.get_stats()["total_requests"]
+        _emit({"correlation_id": None})
+        assert audit.get_stats()["total_requests"] == before + 1

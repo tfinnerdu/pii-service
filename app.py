@@ -1659,6 +1659,32 @@ def scan_ocr():
     if err:
         return err
 
+    if _SANDBOX_MODE:
+        fake_pages = [
+            {
+                "page_number": p.get("page_number", i + 1),
+                "ocr_confidence": float(p.get("confidence", 100.0)),
+                "low_confidence_warning": float(p.get("confidence", 100.0)) < low_conf_threshold,
+                "sanitized_text": "[PERSON] placeholder for sandbox mode",
+                "pii_found": True,
+                "hit_count": 1,
+                "entity_types": ["PERSON"],
+                "risk_level": "MEDIUM",
+            }
+            for i, p in enumerate(pages) if isinstance(p, dict)
+        ]
+        resp = {
+            "page_count": len(fake_pages),
+            "pages_with_pii": len(fake_pages),
+            "highest_risk": "MEDIUM",
+            "pages": fake_pages,
+            "sandbox": True,
+            "request_id": g.request_id,
+        }
+        if correlation_id is not None:
+            resp["correlation_id"] = correlation_id
+        return jsonify(resp)
+
     guard = get_guard()
     page_results = []
     pages_with_pii = 0

@@ -639,3 +639,213 @@ class TestNewSchemaProfilesContract:
             if schema["name"] in self.NEW_PROFILES:
                 for key in ("name", "description", "field_count", "default_mode", "fields"):
                     assert key in schema, f"Schema '{schema['name']}' missing key '{key}'"
+
+
+# ---------------------------------------------------------------------------
+# Keys endpoints contract — pinned 2025-05
+# ---------------------------------------------------------------------------
+
+class TestKeysContract:
+    """
+    Known-good: GET /api/v1/keys returns name list (never key values).
+    POST /api/v1/keys/generate returns name + key + instructions (key shown once).
+    Auth disabled in sandbox mode so both endpoints are reachable in tests.
+    """
+
+    def test_get_keys_has_required_fields(self, client):
+        data = client.get("/api/v1/keys").get_json()
+        for key in ("keys", "count", "auth_enabled"):
+            assert key in data, f"/api/v1/keys response missing field '{key}'"
+
+    def test_get_keys_returns_list(self, client):
+        data = client.get("/api/v1/keys").get_json()
+        assert isinstance(data["keys"], list)
+        assert isinstance(data["count"], int)
+        assert data["count"] == len(data["keys"])
+
+    def test_generate_key_requires_name(self, client):
+        data = client.post("/api/v1/keys/generate", json={}).get_json()
+        assert data.get("code") == "INVALID_INPUT", (
+            "POST /api/v1/keys/generate without 'name' must return INVALID_INPUT"
+        )
+
+    def test_generate_key_response_shape(self, client):
+        data = client.post("/api/v1/keys/generate", json={"name": "test-svc", "prefix": "sk_test"}).get_json()
+        for field in ("name", "key", "add_to_api_keys", "instructions"):
+            assert field in data, f"/api/v1/keys/generate response missing field '{field}'"
+
+    def test_generate_key_name_echoed(self, client):
+        data = client.post("/api/v1/keys/generate", json={"name": "test-svc"}).get_json()
+        assert data.get("name") == "test-svc"
+
+    def test_generate_key_value_present_and_nonempty(self, client):
+        data = client.post("/api/v1/keys/generate", json={"name": "test-svc"}).get_json()
+        assert isinstance(data.get("key"), str) and len(data["key"]) > 8, (
+            "Generated key must be a non-trivial string — shown once, must be usable"
+        )
+
+    def test_generate_key_add_to_api_keys_format(self, client):
+        data = client.post("/api/v1/keys/generate", json={"name": "test-svc"}).get_json()
+        add_to = data.get("add_to_api_keys", "")
+        assert add_to.startswith("test-svc:"), (
+            "add_to_api_keys must be 'name:key' format for direct paste into API_KEYS env var"
+        )
+
+    def test_generate_key_name_with_invalid_chars_rejected(self, client):
+        data = client.post("/api/v1/keys/generate", json={"name": "bad name!"}).get_json()
+        assert data.get("code") == "INVALID_INPUT"
+
+
+# ---------------------------------------------------------------------------
+# OCR scan endpoint contract — pinned 2025-05
+# ---------------------------------------------------------------------------
+
+class TestOcrScanContract:
+    """
+    Known-good: POST /api/v1/scan/ocr accepts OCR service page output and returns
+    per-page PII results with confidence metadata.
+    Sandbox mode used so Presidio is not required.
+    """
+
+    @pytest.fixture(autouse=True)
+    def enable_sandbox(self, monkeypatch):
+        monkeypatch.setenv("PII_SANDBOX_MODE", "true")
+        import app as _app
+        _app._SANDBOX_MODE = True
+        yield
+        _app._SANDBOX_MODE = False
+
+    def _pages(self, text="Student D1234567", confidence=95.0):
+        return [{"page_number": 1, "text": text, "confidence": confidence}]
+
+    def test_ocr_scan_requires_pages(self, client):
+        data = client.post("/api/v1/scan/ocr", json={}).get_json()
+        assert data.get("code") == "INVALID_INPUT"
+
+    def test_ocr_scan_empty_pages_rejected(self, client):
+        data = client.post("/api/v1/scan/ocr", json={"pages": []}).get_json()
+        assert data.get("code") == "INVALID_INPUT"
+
+    def test_ocr_scan_response_top_level_shape(self, client):
+        data = client.post("/api/v1/scan/ocr", json={"pages": self._pages()}).get_json()
+        for field in ("page_count", "pages_with_pii", "highest_risk", "pages", "request_id"):
+            assert field in data, f"/api/v1/scan/ocr response missing top-level field '{field}'"
+
+    def test_ocr_scan_page_result_shape(self, client):
+        data = client.post("/api/v1/scan/ocr", json={"pages": self._pages()}).get_json()
+        page = data["pages"][0]
+        for field in ("page_number", "ocr_confidence", "low_confidence_warning",
+                      "sanitized_text", "pii_found", "hit_count", "entity_types", "risk_level"):
+            assert field in page, f"OCR page result missing field '{field}'"
+
+    def test_ocr_scan_low_confidence_warning_set_when_below_threshold(self, client):
+        data = client.post("/api/v1/scan/ocr", json={
+            "pages": self._pages(confidence=40.0),
+            "low_confidence_threshold": 70.0,
+        }).get_json()
+        assert data["pages"][0]["low_confidence_warning"] is True
+
+    def test_ocr_scan_low_confidence_warning_clear_when_above_threshold(self, client):
+        data = client.post("/api/v1/scan/ocr", json={
+            "pages": self._pages(confidence=95.0),
+            "low_confidence_threshold": 70.0,
+        }).get_json()
+        assert data["pages"][0]["low_confidence_warning"] is False
+
+    def test_ocr_scan_correlation_id_echoed_when_provided(self, client):
+        data = client.post("/api/v1/scan/ocr", json={
+            "pages": self._pages(),
+            "correlation_id": "ocr-job-abc123",
+        }).get_json()
+        assert data.get("correlation_id") == "ocr-job-abc123", (
+            "correlation_id must be echoed in /api/v1/scan/ocr response when provided"
+        )
+
+    def test_ocr_scan_correlation_id_absent_when_not_provided(self, client):
+        data = client.post("/api/v1/scan/ocr", json={"pages": self._pages()}).get_json()
+        assert "correlation_id" not in data, (
+            "correlation_id must NOT appear in response when caller did not provide it"
+        )
+
+    def test_ocr_scan_invalid_mode_rejected(self, client):
+        data = client.post("/api/v1/scan/ocr", json={
+            "pages": self._pages(), "mode": "invalid_mode",
+        }).get_json()
+        assert data.get("code") == "INVALID_MODE"
+
+    def test_ocr_scan_page_count_matches_input(self, client):
+        pages = [
+            {"page_number": 1, "text": "page one text", "confidence": 90.0},
+            {"page_number": 2, "text": "page two text", "confidence": 85.0},
+        ]
+        data = client.post("/api/v1/scan/ocr", json={"pages": pages}).get_json()
+        assert data["page_count"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Async jobs stub contract — pinned 2025-05
+# ---------------------------------------------------------------------------
+
+class TestJobsStubContract:
+    """
+    Known-good: GET /api/v1/jobs/<id> returns 501 NOT_IMPLEMENTED.
+    Redis/RQ deferred — this test is a tripwire so the stub is never accidentally
+    replaced with a silent 404.
+    """
+
+    def test_jobs_returns_501(self, client):
+        resp = client.get("/api/v1/jobs/some-job-id-123")
+        assert resp.status_code == 501, (
+            "GET /api/v1/jobs/<id> must return 501 until async queue is implemented. "
+            "If this test starts failing with 200, the stub was replaced — update this test."
+        )
+
+    def test_jobs_response_code_is_not_implemented(self, client):
+        data = client.get("/api/v1/jobs/some-job-id-123").get_json()
+        assert data.get("code") == "NOT_IMPLEMENTED"
+
+    def test_jobs_echoes_job_id(self, client):
+        data = client.get("/api/v1/jobs/my-specific-job-id").get_json()
+        assert data.get("job_id") == "my-specific-job-id"
+
+
+# ---------------------------------------------------------------------------
+# Correlation ID contract — pinned 2025-05
+# ---------------------------------------------------------------------------
+
+class TestCorrelationIdContract:
+    """
+    Known-good: correlation_id passed in request body is echoed in response.
+    Absent when not provided. Applies to /scan, /sanitize, /preflight, /scan/ocr.
+    Sandbox mode used so Presidio is not required.
+    """
+
+    @pytest.fixture(autouse=True)
+    def enable_sandbox(self, monkeypatch):
+        monkeypatch.setenv("PII_SANDBOX_MODE", "true")
+        import app as _app
+        _app._SANDBOX_MODE = True
+        yield
+        _app._SANDBOX_MODE = False
+
+    def test_scan_echoes_correlation_id(self, client):
+        data = client.post("/api/v1/scan", json={
+            "text": "some text", "correlation_id": "cid-scan-001"
+        }).get_json()
+        assert data.get("correlation_id") == "cid-scan-001"
+
+    def test_scan_no_correlation_id_absent_from_response(self, client):
+        data = client.post("/api/v1/scan", json={"text": "some text"}).get_json()
+        assert "correlation_id" not in data
+
+    def test_sanitize_echoes_correlation_id(self, client):
+        data = client.post("/api/v1/sanitize", json={
+            "text": "some text", "correlation_id": "cid-san-001"
+        }).get_json()
+        assert data.get("correlation_id") == "cid-san-001"
+
+    def test_preflight_does_not_fail_with_correlation_id(self, client):
+        data = client.post("/api/v1/preflight", json={
+            "text": "some text", "correlation_id": "cid-pre-001"
+        }).get_json()
+        assert "request_id" in data

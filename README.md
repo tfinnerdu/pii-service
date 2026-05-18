@@ -47,10 +47,13 @@ Service starts on **port 5900** by default. Visit `http://localhost:5900/health`
 | GET | `/api/v1/policies` | Named policy catalog |
 | GET | `/api/v1/schemas` | ERP schema profiles (Banner, Colleague, Salesforce, Ethos, Workday, ServiceNow, Slate, Starfish, Canvas, Microsoft Graph, n8n) |
 | GET | `/api/v1/stats` | In-process telemetry snapshot |
+| GET | `/api/v1/keys` | List active named key names (never key values) |
+| GET | `/api/v1/jobs/<id>` | Async job status — 501 stub (Redis/RQ deferred) |
 | POST | `/api/v1/stats/reset` | Reset telemetry counters |
-| POST | `/api/v1/config/reload` | Hot-reload PII_CONFIG_FILE without pod restart |
+| POST | `/api/v1/config/reload` | Hot-reload PII_CONFIG_FILE + API_KEYS without pod restart |
 | POST | `/api/v1/scan` | Detect PII in text (no modification) |
 | POST | `/api/v1/scan/structured` | Scan specific fields of a JSON record |
+| POST | `/api/v1/scan/ocr` | PII scan of OCR service page output (per-page, confidence-aware) |
 | POST | `/api/v1/sanitize` | Detect and sanitize a single text |
 | POST | `/api/v1/sanitize/batch` | Sanitize a list of texts |
 | POST | `/api/v1/sanitize/structured` | Sanitize specific fields of a JSON record |
@@ -59,8 +62,9 @@ Service starts on **port 5900** by default. Visit `http://localhost:5900/health`
 | POST | `/api/v1/process` | Generic entry point — text, record, or batch + optional policy + schema + `recursive` |
 | POST | `/api/v1/file` | Upload and sanitize a file (CSV/TSV/JSON/JSONL/TXT/PDF/DOCX/XLSX) |
 | POST | `/api/v1/explain` | Per-hit detection breakdown (pattern, recognizer, context, score) |
+| POST | `/api/v1/keys/generate` | Generate a cryptographically secure named API key (shown once) |
 
-All endpoints except `/health` require `Authorization: Bearer <key>` or `X-API-Key: <key>` when `API_KEY` is set.
+All endpoints except `/health`, `/health/deep`, and `/metrics` require `Authorization: Bearer <key>` or `X-API-Key: <key>` when `API_KEY` or `API_KEYS` is set.
 
 ---
 
@@ -211,7 +215,8 @@ curl -X POST http://localhost:5900/api/v1/config/reload -H "X-API-Key: $API_KEY"
 | `PII_USE_SPACY` | `true` | Use spaCy NLP for PERSON/LOCATION (requires en_core_web_lg) |
 | `PORT` | `5900` | Flask listen port |
 | `FLASK_ENV` | `production` | `development` enables debug mode |
-| `API_KEY` | *(empty)* | Auth key — leave empty to disable auth locally |
+| `API_KEY` | *(empty)* | Single auth key — backward-compatible; stored as name `"default"` |
+| `API_KEYS` | *(empty)* | Named multi-key auth: `"name1:key1,name2:key2,..."` — names appear in audit logs as `caller_name`. Merged with `API_KEY` at startup. Use `POST /api/v1/keys/generate` to create keys, then `POST /api/v1/config/reload` to activate. |
 | `BATCH_SIZE_LIMIT` | `500` | Max texts in a batch request |
 | `FILE_ROW_LIMIT` | `10000` | Max rows in uploaded files |
 | `FILE_SIZE_LIMIT_MB` | `10` | Max file upload size |

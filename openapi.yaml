@@ -646,6 +646,185 @@ paths:
         "503":
           description: Presidio not available
 
+  /api/v1/keys:
+    get:
+      summary: List active named key names
+      description: Returns the names of all active API keys. Key values are never returned.
+      tags: [Auth]
+      security:
+        - BearerAuth: []
+        - ApiKeyHeader: []
+      responses:
+        "200":
+          description: Key name list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys:  { type: array, items: { type: string } }
+                  count: { type: integer }
+                  auth_enabled: { type: boolean }
+        "401":
+          description: Authentication required
+        "403":
+          description: Invalid API key
+
+  /api/v1/keys/generate:
+    post:
+      summary: Generate a cryptographically secure named API key
+      description: |
+        Generates a new API key for a named caller. The key value is returned exactly once —
+        it is never stored by pii-service. Add it to the API_KEYS env var and call
+        POST /api/v1/config/reload to activate without restart.
+      tags: [Auth]
+      security:
+        - BearerAuth: []
+        - ApiKeyHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  pattern: '^[a-zA-Z0-9_-]+$'
+                  description: Caller label that appears in audit logs as caller_name
+                  example: n8n-prod
+                prefix:
+                  type: string
+                  default: sk
+                  description: Key prefix for readability (e.g. "sk_n8n")
+                  example: sk_n8n
+      responses:
+        "200":
+          description: Generated key (shown once)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name:             { type: string }
+                  key:              { type: string, description: "Full key value — store securely, shown once" }
+                  add_to_api_keys:  { type: string, description: "Ready-to-paste 'name:key' string for API_KEYS env var" }
+                  instructions:     { type: string }
+        "400":
+          description: Invalid input (missing name or invalid characters)
+        "401":
+          description: Authentication required
+        "403":
+          description: Invalid API key
+
+  /api/v1/scan/ocr:
+    post:
+      summary: PII scan of OCR service page output
+      description: |
+        Accepts the page array output from the OCR service (text + confidence per page) and
+        returns per-page PII scan results. Pages with OCR confidence below low_confidence_threshold
+        receive low_confidence_warning=true, flagging that OCR errors may have caused PII to be
+        missed or misread. Designed to be called by the OCR service after text extraction.
+      tags: [Detection]
+      security:
+        - BearerAuth: []
+        - ApiKeyHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pages]
+              properties:
+                pages:
+                  type: array
+                  items:
+                    type: object
+                    required: [page_number, text, confidence]
+                    properties:
+                      page_number:  { type: integer, example: 1 }
+                      text:         { type: string, description: "OCR-extracted text for this page" }
+                      confidence:   { type: number, format: float, example: 94.1, description: "OCR confidence 0-100" }
+                mode:
+                  type: string
+                  enum: [mask, redact, pseudonymize, exclude]
+                  default: mask
+                low_confidence_threshold:
+                  type: number
+                  format: float
+                  default: 70.0
+                  description: Pages with OCR confidence below this get low_confidence_warning=true
+                exclude_entity_types:
+                  type: array
+                  items: { type: string }
+                correlation_id:
+                  type: string
+                  description: Opaque caller-supplied ID echoed in response and audit log
+                  example: "ocr-job-abc123"
+      responses:
+        "200":
+          description: Per-page PII scan results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  page_count:     { type: integer }
+                  pages_with_pii: { type: integer }
+                  highest_risk:   { type: string, enum: [LOW, MEDIUM, HIGH, CRITICAL] }
+                  pages:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        page_number:           { type: integer }
+                        ocr_confidence:        { type: number }
+                        low_confidence_warning: { type: boolean }
+                        sanitized_text:        { type: string }
+                        pii_found:             { type: boolean }
+                        hit_count:             { type: integer }
+                        entity_types:          { type: array, items: { type: string } }
+                        risk_level:            { type: string, enum: [LOW, MEDIUM, HIGH, CRITICAL] }
+                  correlation_id: { type: string, description: "Echoed when provided in request" }
+                  request_id:     { type: string, format: uuid }
+        "400":
+          description: Invalid input or mode
+        "401":
+          description: Authentication required
+        "403":
+          description: Invalid API key
+
+  /api/v1/jobs/{job_id}:
+    get:
+      summary: Async job status (stub — Redis/RQ deferred)
+      description: |
+        Returns 501 NOT_IMPLEMENTED. Placeholder for a future Redis/RQ async job queue.
+        Will be implemented when file workloads exceed the synchronous timeout ceiling.
+      tags: [Observability]
+      security:
+        - BearerAuth: []
+        - ApiKeyHeader: []
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "501":
+          description: Not implemented
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:        { type: string }
+                  code:         { type: string, example: NOT_IMPLEMENTED }
+                  job_id:       { type: string }
+                  pending_item: { type: string }
+                  request_id:   { type: string, format: uuid }
+
 tags:
   - name: Health
     description: Liveness, readiness, and deep health checks
@@ -655,6 +834,8 @@ tags:
     description: Entity types, policies, and schema profiles
   - name: Configuration
     description: Dynamic config management
+  - name: Auth
+    description: API key management and generation
   - name: Detection
     description: PII scanning and risk assessment
   - name: Sanitization
