@@ -14,6 +14,7 @@ If the change affects callers (Conductor workers, Doane platform services),
 update those callers in the same PR.
 """
 
+import io
 import pytest
 import json
 import os
@@ -313,3 +314,137 @@ class TestErrorResponseContract:
     def test_404_on_unknown_route(self, client):
         resp = client.get("/api/v1/does-not-exist")
         assert resp.status_code == 404
+
+    def test_text_too_long_returns_400(self, client, monkeypatch):
+        monkeypatch.setenv("MAX_TEXT_LENGTH", "10")
+        resp = client.post("/api/v1/scan", json={"text": "a" * 11})
+        assert resp.status_code == 400
+        data = resp.get_json()
+        assert data["code"] == "TEXT_TOO_LONG"
+        missing = self.EXPECTED_KEYS - set(data.keys())
+        assert not missing, f"TEXT_TOO_LONG error missing keys: {missing}"
+
+
+# ---------------------------------------------------------------------------
+# /api/v1/schemas response shape — pinned 2025-05
+# No presidio needed — schemas are pure config.
+# ---------------------------------------------------------------------------
+
+class TestSchemasContract:
+    """
+    Known-good: /api/v1/schemas returns these top-level keys and includes
+    all six built-in schema profiles. If a profile is renamed or removed,
+    update callers that reference it by name (n8n workflows, Conductor tasks).
+    """
+    EXPECTED_KEYS = {"schemas", "count"}
+    EXPECTED_SCHEMA_KEYS = {"name", "description", "field_count", "default_mode", "fields"}
+    REQUIRED_PROFILES = {
+        "banner_student", "colleague_person", "salesforce_contact",
+        "ethos_person", "n8n_generic", "conductor_ethos",
+    }
+
+    def test_schemas_returns_200(self, client):
+        resp = client.get("/api/v1/schemas")
+        assert resp.status_code == 200
+
+    def test_schemas_top_level_shape(self, client):
+        data = client.get("/api/v1/schemas").get_json()
+        missing = self.EXPECTED_KEYS - set(data.keys())
+        assert not missing, f"/api/v1/schemas missing keys: {missing}"
+
+    def test_all_required_profiles_present(self, client):
+        names = {s["name"] for s in client.get("/api/v1/schemas").get_json()["schemas"]}
+        missing = self.REQUIRED_PROFILES - names
+        assert not missing, (
+            f"Schema catalog missing profiles: {missing}. "
+            "Callers that reference these by name (n8n, Conductor) will break."
+        )
+
+    def test_schema_object_shape(self, client):
+        for schema in client.get("/api/v1/schemas").get_json()["schemas"]:
+            missing = self.EXPECTED_SCHEMA_KEYS - set(schema.keys())
+            assert not missing, f"Schema '{schema.get('name')}' missing keys: {missing}"
+
+    def test_count_matches_list(self, client):
+        data = client.get("/api/v1/schemas").get_json()
+        assert data["count"] == len(data["schemas"]), (
+            "Schema count field does not match actual list length. "
+            "Callers using count for pagination will get wrong results."
+        )
+
+    def test_banner_student_has_ssn_field(self, client):
+        schemas = {s["name"]: s for s in client.get("/api/v1/schemas").get_json()["schemas"]}
+        banner = schemas["banner_student"]
+        assert "SPBPERS_SSN" in banner["fields"], (
+            "banner_student schema must map SPBPERS_SSN. "
+            "This is how Banner's SSN column is identified for masking."
+        )
+
+
+# ---------------------------------------------------------------------------
+# /api/v1/stats/reset contract — pinned 2025-05
+# ---------------------------------------------------------------------------
+
+class TestStatsResetContract:
+    def test_reset_returns_200(self, client):
+        resp = client.post("/api/v1/stats/reset")
+        assert resp.status_code == 200
+
+    def test_reset_response_shape(self, client):
+        data = client.post("/api/v1/stats/reset").get_json()
+        assert data.get("reset") is True
+
+
+# ---------------------------------------------------------------------------
+# /api/v1/config/reload contract — pinned 2025-05
+# ---------------------------------------------------------------------------
+
+class TestConfigReloadContract:
+    EXPECTED_KEYS = {"reloaded", "entity_thresholds", "custom_patterns", "schema_profiles"}
+
+    def test_reload_returns_200(self, client):
+        resp = client.post("/api/v1/config/reload")
+        assert resp.status_code == 200
+
+    def test_reload_response_shape(self, client):
+        data = client.post("/api/v1/config/reload").get_json()
+        missing = self.EXPECTED_KEYS - set(data.keys())
+        assert not missing, f"/api/v1/config/reload missing keys: {missing}"
+
+    def test_reloaded_is_true(self, client):
+        assert client.post("/api/v1/config/reload").get_json()["reloaded"] is True
+
+
+# ---------------------------------------------------------------------------
+# /api/v1/file error response contracts — no presidio needed
+# ---------------------------------------------------------------------------
+
+class TestFileUploadErrorContract:
+    """
+    Known-good: file endpoint error codes for pre-processing failures.
+    These fire before PII detection so they work without presidio installed.
+    """
+
+    def test_no_file_returns_400(self, client):
+        resp = client.post("/api/v1/file")
+        assert resp.status_code == 400
+        assert resp.get_json()["code"] == "NO_FILE"
+
+    def test_unsupported_extension_returns_400(self, client):
+        data = {"file": (io.BytesIO(b"hello"), "document.xyz")}
+        resp = client.post("/api/v1/file", data=data, content_type="multipart/form-data")
+        assert resp.status_code == 400
+        assert resp.get_json()["code"] == "INVALID_FILE_TYPE"
+
+    def test_invalid_mode_returns_400(self, client):
+        data = {"file": (io.BytesIO(b"name,notes\n"), "data.csv"), "mode": "vaporize"}
+        resp = client.post("/api/v1/file", data=data, content_type="multipart/form-data")
+        assert resp.status_code == 400
+        assert resp.get_json()["code"] == "INVALID_MODE"
+
+    def test_file_too_large_returns_400(self, client, monkeypatch):
+        monkeypatch.setenv("FILE_SIZE_LIMIT_MB", "0")
+        data = {"file": (io.BytesIO(b"small content here"), "data.csv")}
+        resp = client.post("/api/v1/file", data=data, content_type="multipart/form-data")
+        assert resp.status_code == 400
+        assert resp.get_json()["code"] == "FILE_TOO_LARGE"

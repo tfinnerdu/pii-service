@@ -111,3 +111,38 @@ class TestRequireApiKeyDecorator:
             data = resp.get_json()
             # Prefix should be truncated — the full key must not appear
             assert data["key_prefix"] != "abcdefghijklmn"
+
+    def test_empty_x_api_key_header_rejected(self):
+        """Empty X-API-Key must be treated as missing — not as a valid empty key."""
+        app = self._make_app(key="real-key")
+        with app.test_client() as client:
+            resp = client.get("/protected", headers={"X-API-Key": ""})
+            assert resp.status_code == 401, (
+                "Empty X-API-Key should return 401, not 403. "
+                "Empty string is equivalent to missing key."
+            )
+
+    def test_authorization_header_takes_precedence_over_x_api_key(self):
+        """When both headers are present, Authorization Bearer is evaluated first."""
+        app = self._make_app(key="correct-key")
+        with app.test_client() as client:
+            resp = client.get(
+                "/protected",
+                headers={"Authorization": "Bearer wrong-key", "X-API-Key": "correct-key"},
+            )
+            assert resp.status_code == 403, (
+                "When Authorization: Bearer is present (even if wrong), "
+                "X-API-Key must NOT be used as a fallback."
+            )
+
+    def test_non_bearer_authorization_falls_through_to_x_api_key(self):
+        """A non-Bearer Authorization header does not block X-API-Key fallback."""
+        app = self._make_app(key="correct-key")
+        with app.test_client() as client:
+            resp = client.get(
+                "/protected",
+                headers={"Authorization": "Token some-other-scheme", "X-API-Key": "correct-key"},
+            )
+            assert resp.status_code == 200, (
+                "When Authorization header is not Bearer, X-API-Key should be used as fallback."
+            )

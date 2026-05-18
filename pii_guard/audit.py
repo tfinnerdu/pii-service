@@ -63,6 +63,20 @@ def get_stats() -> dict:
 # Audit event emission
 # ---------------------------------------------------------------------------
 
+def reset_stats() -> None:
+    """Reset in-memory counters. Call between test runs or after deployment."""
+    with _lock:
+        _stats["total_requests"] = 0
+        _stats["total_pii_hits"] = 0
+        _stats["total_excluded"] = 0
+        _stats["total_clean"] = 0
+        _stats["entity_type_counts"].clear()
+        _stats["mode_counts"].clear()
+        _stats["risk_level_counts"].clear()
+        _stats["endpoint_counts"].clear()
+        _stats["process_start"] = time.time()
+
+
 def log_event(
     *,
     endpoint: str,

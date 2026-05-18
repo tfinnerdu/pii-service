@@ -89,6 +89,15 @@ class PiiGuard:
         self._anonymizer = None
         self._pseudo_cache: dict[str, str] = {}
         self._initialized = False
+        # Load custom pseudo pools from config if available
+        try:
+            from .config import get_config
+            pools = get_config().pseudo_pools
+            self._fake_first = pools.get("first_names") or None
+            self._fake_last = pools.get("last_names") or None
+            self._fake_cities = pools.get("cities") or None
+        except Exception:
+            self._fake_first = self._fake_last = self._fake_cities = None
 
     def _ensure_initialized(self) -> None:
         if self._initialized:
@@ -431,7 +440,7 @@ class PiiGuard:
         if cache_key in self._pseudo_cache:
             return self._pseudo_cache[cache_key]
         seed = int(hashlib.md5(original.encode()).hexdigest()[:8], 16)
-        fake = _generate_pseudo(entity_type, seed)
+        fake = _generate_pseudo(entity_type, seed, self._fake_first, self._fake_last, self._fake_cities)
         self._pseudo_cache[cache_key] = fake
         return fake
 
@@ -440,20 +449,45 @@ class PiiGuard:
 # Pseudonym generators — plausible fake values by entity type
 # ---------------------------------------------------------------------------
 
-_FAKE_FIRST  = ["Alex", "Jordan", "Casey", "Morgan", "Taylor", "Riley", "Drew", "Quinn", "Avery", "Blake"]
-_FAKE_LAST   = ["Rivera", "Chen", "Okafor", "Novak", "Patel", "Santos", "Kim", "Andersen", "Muller", "Diaz"]
-_FAKE_CITIES = ["Springfield", "Shelbyville", "Centerville", "Greenfield", "Maplewood", "Riverdale"]
+_FAKE_FIRST = [
+    "Alex", "Jordan", "Casey", "Morgan", "Taylor", "Riley", "Drew", "Quinn",
+    "Avery", "Blake", "Cameron", "Dakota", "Emery", "Finley", "Hayden",
+    "Indira", "Jalen", "Kai", "Leila", "Marcus", "Nadia", "Omar", "Priya",
+    "Rowan", "Sage", "Tobias", "Uma", "Vesper", "Wynne", "Zara",
+]
+_FAKE_LAST = [
+    "Rivera", "Chen", "Okafor", "Novak", "Patel", "Santos", "Kim",
+    "Andersen", "Muller", "Diaz", "Krishnamurthy", "Obi", "Nakamura",
+    "Petrov", "Oluwaseun", "Bergstrom", "Abramowitz", "Delacroix",
+    "Watanabe", "Gutierrez", "Nkosi", "Kowalski", "Ferreira", "Hakim",
+    "Lindqvist", "Oduya", "Tremblay", "Vasquez", "Wexler", "Yamamoto",
+]
+_FAKE_CITIES = [
+    "Springfield", "Shelbyville", "Centerville", "Greenfield", "Maplewood",
+    "Riverdale", "Fairview", "Georgetown", "Hillcrest", "Lakewood",
+    "Millbrook", "Northfield", "Oakdale", "Pleasantville", "Richland",
+    "Sunnyvale", "Thornton", "Unionville", "Valleyview", "Westbrook",
+]
 _FAKE_DOMAINS = ["example.com", "test.edu", "placeholder.org", "sample.net"]
 
 
-def _generate_pseudo(entity_type: str, seed: int) -> str:
+def _generate_pseudo(
+    entity_type: str,
+    seed: int,
+    fake_first: list[str] = None,
+    fake_last: list[str] = None,
+    fake_cities: list[str] = None,
+) -> str:
+    ff = fake_first or _FAKE_FIRST
+    fl = fake_last or _FAKE_LAST
+    fc = fake_cities or _FAKE_CITIES
     r = seed
 
     if entity_type == "PERSON":
-        return f"{_FAKE_FIRST[r % len(_FAKE_FIRST)]} {_FAKE_LAST[(r >> 4) % len(_FAKE_LAST)]}"
+        return f"{ff[r % len(ff)]} {fl[(r >> 4) % len(fl)]}"
 
     if entity_type in ("EMAIL_ADDRESS", "DOANE_EMAIL"):
-        first  = _FAKE_FIRST[r % len(_FAKE_FIRST)].lower()
+        first  = ff[r % len(ff)].lower()
         domain = _FAKE_DOMAINS[r % len(_FAKE_DOMAINS)]
         return f"{first}.test@{domain}"
 
@@ -477,7 +511,7 @@ def _generate_pseudo(entity_type: str, seed: int) -> str:
         return f"{month:02d}/{day:02d}/{year}"
 
     if entity_type == "LOCATION":
-        return _FAKE_CITIES[r % len(_FAKE_CITIES)]
+        return fc[r % len(fc)]
 
     if entity_type in ("STUDENT_ID", "BANNER_ID", "COLLEAGUE_ID"):
         return f"D{(r % 9000000) + 1000000:07d}"

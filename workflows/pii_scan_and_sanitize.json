@@ -1,8 +1,8 @@
 {
   "name": "pii_scan_and_sanitize",
-  "description": "Scan text for PII, gate on risk level, then sanitize before AI processing.",
+  "description": "Scan text for PII and sanitize before AI processing. Policy takes precedence over mode when provided.",
   "version": 1,
-  "inputParameters": ["text", "mode", "policy", "min_safe_risk_level"],
+  "inputParameters": ["text", "mode", "policy", "exclude_entity_types"],
   "outputParameters": {
     "pii_found": "${sanitize_ref.output.pii_found}",
     "risk_level": "${sanitize_ref.output.risk_level}",
@@ -19,7 +19,7 @@
         "text": "${workflow.input.text}",
         "mode": "${workflow.input.mode}",
         "policy": "${workflow.input.policy}",
-        "exclude_entity_types": []
+        "exclude_entity_types": "${workflow.input.exclude_entity_types}"
       }
     }
   ],

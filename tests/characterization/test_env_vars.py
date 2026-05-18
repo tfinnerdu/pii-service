@@ -40,6 +40,8 @@ EXPECTED_ENV_VARS = {
     "FILE_SIZE_LIMIT_MB",
     # Dynamic config
     "PII_CONFIG_FILE",
+    # Text length limit
+    "MAX_TEXT_LENGTH",
     # Orkes Conductor integration (optional — standalone worker only)
     "CONDUCTOR_SERVER_URL",
     "CONDUCTOR_AUTH_KEY",

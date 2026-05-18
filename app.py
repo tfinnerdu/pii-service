@@ -19,6 +19,8 @@ Endpoints:
   POST /api/v1/policy/apply          - Apply a named policy
   POST /api/v1/process               - Generic process: raw text/record in, PII-safe out
   POST /api/v1/file                  - Sanitize uploaded CSV, JSON, PDF, DOCX, XLSX, TXT
+  POST /api/v1/config/reload         - Hot-reload PII_CONFIG_FILE without pod restart
+  POST /api/v1/stats/reset           - Reset in-memory telemetry counters
 """
 
 import csv
@@ -65,11 +67,30 @@ _guard: PiiGuard = None
 def get_guard() -> PiiGuard:
     global _guard
     if _guard is None:
-        threshold = float(os.getenv("PII_SCORE_THRESHOLD", "0.5"))
+        threshold_str = os.getenv("PII_SCORE_THRESHOLD", "0.5")
+        try:
+            threshold = float(threshold_str)
+        except ValueError:
+            logger.error("PII_SCORE_THRESHOLD='%s' is not a valid float — using 0.5", threshold_str)
+            threshold = 0.5
+        if not 0.0 <= threshold <= 1.0:
+            logger.warning("PII_SCORE_THRESHOLD=%.3f outside [0, 1] — clamping to 0.5", threshold)
+            threshold = 0.5
         use_spacy = os.getenv("PII_USE_SPACY", "true").lower() == "true"
         _guard = PiiGuard(score_threshold=threshold, use_spacy=use_spacy)
         logger.info("PiiGuard initialized (threshold=%.2f, spacy=%s)", threshold, use_spacy)
     return _guard
+
+
+def _check_text_length(text: str):
+    """Return 400 error_response if text exceeds MAX_TEXT_LENGTH, else None."""
+    max_len = int(os.getenv("MAX_TEXT_LENGTH", "100000"))
+    if len(text) > max_len:
+        return error_response(
+            f"Text exceeds maximum length of {max_len:,} characters.",
+            "TEXT_TOO_LONG", 400,
+        )
+    return None
 
 
 # Auth initialized at module load so the startup warning appears before first request
@@ -183,6 +204,44 @@ def get_stats():
 
 
 # ---------------------------------------------------------------------------
+# POST /api/v1/stats/reset
+# ---------------------------------------------------------------------------
+
+@app.route("/api/v1/stats/reset", methods=["POST"])
+@require_api_key
+def reset_stats():
+    """
+    Reset in-memory telemetry counters. Useful after deployments or load tests.
+    Does not affect audit log output — only the /api/v1/stats snapshot.
+    """
+    audit.reset_stats()
+    return jsonify({"reset": True})
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/config/reload
+# ---------------------------------------------------------------------------
+
+@app.route("/api/v1/config/reload", methods=["POST"])
+@require_api_key
+def config_reload():
+    """
+    Hot-reload PII_CONFIG_FILE from disk without restarting the pod.
+    Use after updating custom patterns, entity thresholds, or schema profiles.
+    Note: PiiGuard must be re-created for guard-level settings to take effect
+    (threshold, spacy). File-processing and policy settings reload immediately.
+    """
+    from pii_guard.config import reload_config
+    cfg = reload_config()
+    return jsonify({
+        "reloaded": True,
+        "entity_thresholds": len(cfg.entity_thresholds),
+        "custom_patterns": len(cfg.custom_patterns),
+        "schema_profiles": len(cfg.schema_profiles),
+    })
+
+
+# ---------------------------------------------------------------------------
 # POST /api/v1/scan
 # ---------------------------------------------------------------------------
 
@@ -213,6 +272,9 @@ def scan():
 
     if not isinstance(text, str):
         return error_response("'text' must be a string", "INVALID_INPUT", 400)
+    err = _check_text_length(text)
+    if err:
+        return err
 
     guard = get_guard()
     result = guard.scan(text)
@@ -350,6 +412,9 @@ def sanitize():
 
     if not isinstance(text, str):
         return error_response("'text' must be a string", "INVALID_INPUT", 400)
+    err = _check_text_length(text)
+    if err:
+        return err
 
     mode, err = _parse_mode(mode_str)
     if err:
@@ -581,6 +646,9 @@ def preflight():
 
     if not isinstance(text, str):
         return error_response("'text' must be a string", "INVALID_INPUT", 400)
+    err = _check_text_length(text)
+    if err:
+        return err
 
     guard = get_guard()
     result = guard.preflight(text)
@@ -937,6 +1005,9 @@ def process():
     if text is not None:
         if not isinstance(text, str):
             return error_response("'text' must be a string", "INVALID_INPUT", 400)
+        err = _check_text_length(text)
+        if err:
+            return err
         outcome = _apply_policy_or_mode(text)
 
         audit.log_event(
@@ -1157,7 +1228,8 @@ def _process_csv(guard, content: bytes, columns: list, mode, exclude_types, incl
         reader = csv.DictReader(io.StringIO(text))
         rows = list(reader)
     except Exception as exc:
-        return error_response(f"Failed to parse CSV: {exc}", "PARSE_ERROR", 400)
+        logger.warning("CSV parse error: %s", exc)
+        return error_response("CSV file is invalid or unreadable.", "PARSE_ERROR", 400)
 
     if len(rows) > max_rows:
         return error_response(f"CSV exceeds {max_rows} row limit.", "TOO_MANY_ROWS", 400)
@@ -1217,7 +1289,8 @@ def _process_json(guard, content: bytes, columns: list, mode, exclude_types, inc
     try:
         data = json.loads(content.decode("utf-8"))
     except Exception as exc:
-        return error_response(f"Failed to parse JSON: {exc}", "PARSE_ERROR", 400)
+        logger.warning("JSON parse error: %s", exc)
+        return error_response("JSON file is invalid or unreadable.", "PARSE_ERROR", 400)
 
     if not isinstance(data, list):
         return error_response("JSON file must contain a top-level array of objects.", "INVALID_JSON_SHAPE", 400)
@@ -1284,7 +1357,8 @@ def _process_tsv(guard, content: bytes, columns: list, mode, exclude_types, incl
         reader = csv.DictReader(io.StringIO(text), delimiter="\t")
         rows = list(reader)
     except Exception as exc:
-        return error_response(f"Failed to parse TSV: {exc}", "PARSE_ERROR", 400)
+        logger.warning("TSV parse error: %s", exc)
+        return error_response("TSV file is invalid or unreadable.", "PARSE_ERROR", 400)
 
     if len(rows) > max_rows:
         return error_response(f"TSV exceeds {max_rows} row limit.", "TOO_MANY_ROWS", 400)
@@ -1293,7 +1367,9 @@ def _process_tsv(guard, content: bytes, columns: list, mode, exclude_types, incl
     results, rows_with_pii, excluded_rows = [], 0, 0
 
     for i, row in enumerate(rows):
-        sanitized_row, excluded_fields = guard.sanitize_dict(row, fields=target_cols, mode=mode, exclude_entity_types=exclude_types or None)
+        sanitized_row, excluded_fields = guard.sanitize_dict(
+            row, fields=target_cols, mode=mode, exclude_entity_types=exclude_types or None
+        )
         has_pii = any(row[f] != sanitized_row.get(f) for f in target_cols if f in row)
         if has_pii:
             rows_with_pii += 1
@@ -1301,16 +1377,44 @@ def _process_tsv(guard, content: bytes, columns: list, mode, exclude_types, incl
             excluded_rows += 1
             if not include_excluded:
                 continue
-        results.append({"index": i, "row": sanitized_row, "excluded_fields": excluded_fields, "has_pii": has_pii})
+        results.append({
+            "index": i,
+            "row": sanitized_row,
+            "excluded_fields": excluded_fields,
+            "has_pii": has_pii,
+        })
 
-    return jsonify({"file_type": "tsv", "total_rows": len(rows), "rows_with_pii": rows_with_pii, "excluded_rows": excluded_rows, "results": results, "request_id": g.request_id})
+    audit.log_event(
+        endpoint="/api/v1/file",
+        request_id=g.request_id,
+        client_ip=request.remote_addr,
+        api_key_prefix=g.api_key_prefix,
+        mode=mode.value,
+        hit_count=rows_with_pii,
+        excluded_count=excluded_rows,
+        entity_types=[],
+        risk_level="UNKNOWN",
+        batch_size=len(rows),
+        duration_ms=_duration_ms(),
+        action=mode.value,
+    )
+
+    return jsonify({
+        "file_type": "tsv",
+        "total_rows": len(rows),
+        "rows_with_pii": rows_with_pii,
+        "excluded_rows": excluded_rows,
+        "results": results,
+        "request_id": g.request_id,
+    })
 
 
 def _process_jsonl(guard, content: bytes, columns: list, mode, exclude_types, include_excluded, max_rows) -> tuple:
     try:
         lines = [json.loads(line) for line in content.decode("utf-8").splitlines() if line.strip()]
     except Exception as exc:
-        return error_response(f"Failed to parse JSONL: {exc}", "PARSE_ERROR", 400)
+        logger.warning("JSONL parse error: %s", exc)
+        return error_response("JSONL file contains invalid JSON on one or more lines.", "PARSE_ERROR", 400)
 
     if len(lines) > max_rows:
         return error_response(f"JSONL exceeds {max_rows} record limit.", "TOO_MANY_ROWS", 400)
@@ -1337,7 +1441,8 @@ def _process_txt(guard, content: bytes, columns: list, mode, exclude_types, incl
     try:
         text = content.decode("utf-8")
     except Exception as exc:
-        return error_response(f"Failed to decode TXT: {exc}", "PARSE_ERROR", 400)
+        logger.warning("TXT decode error: %s", exc)
+        return error_response("Text file must be UTF-8 encoded.", "PARSE_ERROR", 400)
 
     result = guard.sanitize(text, mode=mode, exclude_entity_types=exclude_types or None)
     return jsonify({
@@ -1360,7 +1465,8 @@ def _process_pdf(guard, content: bytes, columns: list, mode, exclude_types, incl
         with pdfplumber.open(io.BytesIO(content)) as pdf:
             pages = [page.extract_text() or "" for page in pdf.pages]
     except Exception as exc:
-        return error_response(f"Failed to parse PDF: {exc}", "PARSE_ERROR", 400)
+        logger.warning("PDF parse error: %s", exc)
+        return error_response("PDF file is corrupted or unreadable.", "PARSE_ERROR", 400)
 
     if len(pages) > max_rows:
         return error_response(f"PDF has {len(pages)} pages, limit is {max_rows}.", "TOO_MANY_ROWS", 400)
@@ -1391,7 +1497,8 @@ def _process_docx(guard, content: bytes, columns: list, mode, exclude_types, inc
         doc = Document(io.BytesIO(content))
         paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
     except Exception as exc:
-        return error_response(f"Failed to parse DOCX: {exc}", "PARSE_ERROR", 400)
+        logger.warning("DOCX parse error: %s", exc)
+        return error_response("DOCX file is corrupted or unreadable.", "PARSE_ERROR", 400)
 
     if len(paragraphs) > max_rows:
         return error_response(f"DOCX has {len(paragraphs)} paragraphs, limit is {max_rows}.", "TOO_MANY_ROWS", 400)
@@ -1421,12 +1528,17 @@ def _process_xlsx(guard, content: bytes, columns: list, mode, exclude_types, inc
         ws = wb.active
         all_rows = list(ws.iter_rows(values_only=True))
     except Exception as exc:
-        return error_response(f"Failed to parse XLSX: {exc}", "PARSE_ERROR", 400)
+        logger.warning("XLSX parse error: %s", exc)
+        return error_response("XLSX file is corrupted or unreadable.", "PARSE_ERROR", 400)
 
     if not all_rows:
         return jsonify({"file_type": "xlsx", "total_rows": 0, "rows_with_pii": 0, "excluded_rows": 0, "results": [], "request_id": g.request_id})
 
-    headers = [str(h) if h is not None else f"col_{i}" for i, h in enumerate(all_rows[0])]
+    # Use Excel column letters (A, B, C...) for unnamed headers
+    _col_letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    def _col_name(i: int) -> str:
+        return _col_letters[i] if i < 26 else f"col_{i + 1}"
+    headers = [str(h) if h is not None else _col_name(i) for i, h in enumerate(all_rows[0])]
     data_rows = all_rows[1:]
 
     if len(data_rows) > max_rows:
