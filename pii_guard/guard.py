@@ -9,13 +9,17 @@ Modes:
   PSEUDONYMIZE - Consistent fake-but-plausible values. Best for RAG embeddings.
   EXCLUDE      - Return None if ANY PII found. Drop the chunk entirely.
 
-Pseudonymization is deterministic within a session (same input -> same fake output)
-via MD5-seeded substitution. Call reset_pseudo_cache() between unrelated document batches.
+Pseudonymization is deterministic within a session (same input -> same fake output).
+When PSEUDO_SECRET env var is set, HMAC-SHA256 is used for the seed — this prevents
+an attacker from reversing pseudonyms by enumerating common values.
+Call reset_pseudo_cache() between unrelated document batches.
 """
 
 import hashlib
+import hmac
 import logging
-from typing import Optional
+import os
+from typing import Any, Optional
 
 from .models import (
     SanitizeMode, RiskLevel, EntityHit, ScanResult, PreflightResult,
@@ -89,6 +93,8 @@ class PiiGuard:
         self._anonymizer = None
         self._pseudo_cache: dict[str, str] = {}
         self._initialized = False
+        self._degraded = False
+        self._pseudo_secret = os.getenv("PSEUDO_SECRET", "")
         # Load custom pseudo pools from config if available
         try:
             from .config import get_config
@@ -108,13 +114,41 @@ class PiiGuard:
             from presidio_anonymizer import AnonymizerEngine
             from .recognizers import build_registry
 
-            model = "en_core_web_lg" if self._use_spacy else "en_core_web_sm"
-            provider = NlpEngineProvider(nlp_configuration={
-                "nlp_engine_name": "spacy",
-                "models": [{"lang_code": "en", "model_name": model}],
-            })
-            nlp_engine = provider.create_engine()
             registry = build_registry()
+
+            # Model cascade: lg (preferred) → sm (degraded) → sm always for use_spacy=false
+            if self._use_spacy:
+                model_cascade = ["en_core_web_lg", "en_core_web_sm"]
+            else:
+                model_cascade = ["en_core_web_sm"]
+
+            nlp_engine = None
+            loaded_model = None
+            for model_name in model_cascade:
+                try:
+                    provider = NlpEngineProvider(nlp_configuration={
+                        "nlp_engine_name": "spacy",
+                        "models": [{"lang_code": "en", "model_name": model_name}],
+                    })
+                    nlp_engine = provider.create_engine()
+                    loaded_model = model_name
+                    break
+                except Exception as model_exc:
+                    logger.warning("spaCy model '%s' unavailable: %s", model_name, model_exc)
+
+            if nlp_engine is None:
+                raise RuntimeError(
+                    "No spaCy model available. Install at least en_core_web_sm: "
+                    "python -m spacy download en_core_web_sm"
+                )
+
+            if self._use_spacy and loaded_model != "en_core_web_lg":
+                self._degraded = True
+                logger.warning(
+                    "PiiGuard running in degraded mode — loaded '%s' instead of en_core_web_lg. "
+                    "PERSON/LOCATION accuracy is reduced.",
+                    loaded_model,
+                )
 
             self._analyzer = AnalyzerEngine(
                 nlp_engine=nlp_engine,
@@ -123,7 +157,10 @@ class PiiGuard:
             )
             self._anonymizer = AnonymizerEngine()
             self._initialized = True
-            logger.info("PiiGuard initialized (spacy=%s, model=%s)", self._use_spacy, model)
+            logger.info(
+                "PiiGuard initialized (spacy=%s, model=%s, degraded=%s)",
+                self._use_spacy, loaded_model, self._degraded,
+            )
 
         except ImportError as exc:
             raise RuntimeError(
@@ -156,6 +193,7 @@ class PiiGuard:
         text: str,
         mode: SanitizeMode = SanitizeMode.MASK,
         exclude_entity_types: list[str] = None,
+        context: list[str] = None,
     ) -> ScanResult:
         """
         Scan and sanitize text according to mode.
@@ -165,6 +203,7 @@ class PiiGuard:
             mode:                 Sanitization mode (see SanitizeMode).
             exclude_entity_types: Entity types to skip even if detected.
                                   Example: ["DATE_TIME"] to let dates pass through.
+            context:              Context words to boost pattern scores (for field-hint-aware scanning).
         """
         self._ensure_initialized()
 
@@ -177,7 +216,7 @@ class PiiGuard:
                 mode=mode.value,
             )
 
-        hits = self._analyze(text, skip_types=exclude_entity_types)
+        hits = self._analyze(text, skip_types=exclude_entity_types, context=context)
 
         if not hits:
             return ScanResult(
@@ -228,13 +267,20 @@ class PiiGuard:
         fields: list[str],
         mode: SanitizeMode = SanitizeMode.MASK,
         exclude_entity_types: list[str] = None,
+        field_context_hints: dict[str, str] = None,
     ) -> tuple[dict, list[str]]:
         """
         Sanitize specific string fields in a dict record.
         Returns (sanitized_record, list_of_excluded_field_names).
         Non-string fields and fields not in `fields` are passed through unchanged.
-        Useful for preprocessing Conductor workflow inputs and Salesforce payloads.
+
+        field_context_hints maps field names to entity type strings (e.g. {"SPBPERS_SSN": "US_SSN"}).
+        When provided, context words for the hinted entity type are passed to Presidio's
+        analyzer to boost pattern scores for that field — critical for low-confidence patterns
+        like banner_numeric (0.35) which won't fire without context.
         """
+        from .recognizers import get_context_for_entity
+
         sanitized = dict(record)
         excluded_fields = []
 
@@ -242,7 +288,14 @@ class PiiGuard:
             val = record.get(f)
             if not isinstance(val, str):
                 continue
-            result = self.sanitize(val, mode, exclude_entity_types)
+
+            context = None
+            if field_context_hints and f in field_context_hints:
+                entity_hint = field_context_hints[f]
+                if entity_hint:  # None means "scan all entity types"
+                    context = get_context_for_entity(entity_hint) or None
+
+            result = self.sanitize(val, mode, exclude_entity_types, context=context)
             if result.excluded:
                 excluded_fields.append(f)
                 sanitized[f] = None
@@ -250,6 +303,25 @@ class PiiGuard:
                 sanitized[f] = result.sanitized_text
 
         return sanitized, excluded_fields
+
+    def sanitize_nested(
+        self,
+        data: Any,
+        mode: SanitizeMode = SanitizeMode.MASK,
+        exclude_entity_types: list[str] = None,
+    ) -> Any:
+        """
+        Recursively sanitize all string values in a nested dict/list structure.
+        Non-string leaf values (numbers, booleans, None) pass through unchanged.
+        Useful for Ethos, Slate, ServiceNow, and other APIs with deeply nested payloads.
+        """
+        if isinstance(data, str):
+            return self.sanitize(data, mode, exclude_entity_types).sanitized_text
+        if isinstance(data, dict):
+            return {k: self.sanitize_nested(v, mode, exclude_entity_types) for k, v in data.items()}
+        if isinstance(data, list):
+            return [self.sanitize_nested(item, mode, exclude_entity_types) for item in data]
+        return data
 
     def preflight(self, text: str) -> PreflightResult:
         """
@@ -302,6 +374,7 @@ class PiiGuard:
         record: dict,
         fields: list[str] = None,
         exclude_entity_types: list[str] = None,
+        field_context_hints: dict[str, str] = None,
     ) -> dict:
         """
         Scan all string fields in a dict record (or a specified subset).
@@ -325,6 +398,8 @@ class PiiGuard:
         highest_risk = RiskLevel.LOW
         flagged = []
 
+        from .recognizers import get_context_for_entity
+
         target_fields = fields if fields is not None else [
             k for k, v in record.items() if isinstance(v, str)
         ]
@@ -335,7 +410,13 @@ class PiiGuard:
                 report[field_name] = {"skipped": True, "reason": "non-string field"}
                 continue
 
-            hits = self._analyze(val, skip_types=exclude_entity_types)
+            context = None
+            if field_context_hints and field_name in field_context_hints:
+                entity_hint = field_context_hints[field_name]
+                if entity_hint:
+                    context = get_context_for_entity(entity_hint) or None
+
+            hits = self._analyze(val, skip_types=exclude_entity_types, context=context)
             risk = (
                 max((entity_risk(h.entity_type) for h in hits), key=lambda r: r._rank())
                 if hits else RiskLevel.LOW
@@ -372,12 +453,18 @@ class PiiGuard:
     # Internal analysis
     # ------------------------------------------------------------------
 
-    def _analyze(self, text: str, skip_types: list[str] = None) -> list[EntityHit]:
+    def _analyze(
+        self,
+        text: str,
+        skip_types: list[str] = None,
+        context: list[str] = None,
+    ) -> list[EntityHit]:
         results = self._analyzer.analyze(
             text=text,
             entities=self.entities,
             language="en",
             score_threshold=self.score_threshold,
+            context=context or [],
         )
         skip_types = set(skip_types or [])
         hits = []
@@ -439,7 +526,12 @@ class PiiGuard:
         cache_key = f"{entity_type}::{original}"
         if cache_key in self._pseudo_cache:
             return self._pseudo_cache[cache_key]
-        seed = int(hashlib.md5(original.encode()).hexdigest()[:8], 16)
+        if self._pseudo_secret:
+            # HMAC-SHA256: prevents reversal attacks by enumeration on common values
+            h = hmac.new(self._pseudo_secret.encode(), cache_key.encode(), "sha256")
+            seed = int(h.hexdigest()[:8], 16)
+        else:
+            seed = int(hashlib.md5(original.encode()).hexdigest()[:8], 16)
         fake = _generate_pseudo(entity_type, seed, self._fake_first, self._fake_last, self._fake_cities)
         self._pseudo_cache[cache_key] = fake
         return fake
@@ -469,6 +561,23 @@ _FAKE_CITIES = [
     "Sunnyvale", "Thornton", "Unionville", "Valleyview", "Westbrook",
 ]
 _FAKE_DOMAINS = ["example.com", "test.edu", "placeholder.org", "sample.net"]
+
+_FAKE_ACCOMMODATIONS = [
+    "extended time (1.5x)", "extended time (2.0x)", "separate testing room",
+    "note-taking assistance", "audio recording permitted", "alternative format materials",
+    "adaptive technology use", "reduced distraction testing environment",
+]
+_FAKE_VETERAN_STATUSES = [
+    "Army Veteran", "Navy Veteran", "Air Force Veteran",
+    "Marine Corps Veteran", "Coast Guard Veteran",
+    "National Guard Member", "Reserve Component Member",
+    "Active Duty Military",
+]
+_FAKE_VISA_TYPES = [
+    "F-1 Student Visa", "J-1 Exchange Visitor", "H-1B Specialty Occupation",
+    "O-1 Extraordinary Ability", "TN Professional", "B-1/B-2 Visitor",
+    "Lawful Permanent Resident", "Employment Authorization",
+]
 
 
 def _generate_pseudo(
@@ -532,25 +641,51 @@ def _generate_pseudo(
         return f"ML{r % 999999:06d}"
 
     if entity_type in ("FINANCIAL_ACCOUNT", "US_BANK_NUMBER"):
-        return "0000000000"  # zeroed placeholder
+        # Length-preserving: generate a plausible 10-digit account number
+        n = (r % 9000000000) + 1000000000
+        return str(n)
 
     if entity_type in ("US_PASSPORT",):
-        return "A00000000"
+        letter = chr(ord("A") + r % 26)
+        return f"{letter}{(r % 90000000) + 10000000:08d}"
 
     if entity_type in ("US_DRIVER_LICENSE",):
-        return "DL000000"
+        return f"DL{(r % 9000000) + 1000000:07d}"
 
     if entity_type in ("IMMIGRATION_STATUS",):
-        return "[VISA_TYPE]"
+        return _FAKE_VISA_TYPES[r % len(_FAKE_VISA_TYPES)]
 
     if entity_type in ("DISABILITY_ACCOMMODATION",):
-        return "[ACCOMMODATION]"
+        return _FAKE_ACCOMMODATIONS[r % len(_FAKE_ACCOMMODATIONS)]
 
     if entity_type in ("VETERAN_STATUS",):
-        return "[VETERAN_STATUS]"
+        return _FAKE_VETERAN_STATUSES[r % len(_FAKE_VETERAN_STATUSES)]
 
     if entity_type in ("NRP",):
         return "[SENSITIVE_ATTRIBUTE]"
+
+    if entity_type == "TITLE_IX_CASE_ID":
+        year = 2020 + (r % 6)
+        seq = (r % 9000) + 1000
+        return f"TIX-{year}-{seq:04d}"
+
+    if entity_type == "IRB_PROTOCOL":
+        year = 2020 + (r % 6)
+        seq = (r % 900) + 100
+        return f"IRB-{year}-{seq:03d}"
+
+    if entity_type == "FINANCIAL_AID_AWARD":
+        amount = ((r % 9000) + 1000) * 100
+        return f"Pell Grant ${amount:,}.00"
+
+    if entity_type == "STUDENT_ACCOUNT_ID":
+        return f"TN-{(r % 900000000) + 100000000:09d}"
+
+    if entity_type == "LICENSE_PLATE":
+        letters = "ABCDEFGHJKLMNPQRSTUVWXYZ"
+        p1 = letters[r % len(letters)] + letters[(r >> 4) % len(letters)] + letters[(r >> 8) % len(letters)]
+        p2 = (r % 9000) + 1000
+        return f"{p1} {p2}"
 
     # Fallback for unmapped types
     return f"[{entity_type}]"

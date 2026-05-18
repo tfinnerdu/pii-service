@@ -1,0 +1,665 @@
+openapi: "3.0.3"
+info:
+  title: pii-service
+  version: "1.0.0"
+  description: >
+    FERPA-compliant PII detection and sanitization service for Doane University's AI platform.
+    All processing is local via Microsoft Presidio — no text leaves the machine or cluster.
+  contact:
+    name: Doane University IT
+    url: https://github.com/tfinnerdu/pii-service
+
+servers:
+  - url: http://localhost:5900
+    description: Local development
+  - url: https://du-int.doane.edu/prod/pii-service
+    description: K8s production
+
+# ---------------------------------------------------------------------------
+# Security
+# ---------------------------------------------------------------------------
+security:
+  - BearerAuth: []
+  - ApiKeyHeader: []
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: "Authorization: Bearer <API_KEY>"
+    ApiKeyHeader:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: "X-API-Key: <API_KEY>"
+
+  schemas:
+    Error:
+      type: object
+      required: [error, code, request_id]
+      properties:
+        error:   { type: string }
+        code:    { type: string, description: "Machine-readable error code" }
+        request_id: { type: string, format: uuid }
+
+    EntityHit:
+      type: object
+      required: [entity_type, start, end, score, risk_level]
+      properties:
+        entity_type: { type: string, example: "US_SSN" }
+        start:       { type: integer, description: "Character offset (inclusive)" }
+        end:         { type: integer, description: "Character offset (exclusive)" }
+        score:       { type: number, format: float, minimum: 0, maximum: 1 }
+        risk_level:  { $ref: "#/components/schemas/RiskLevel" }
+
+    ExplainHit:
+      allOf:
+        - $ref: "#/components/schemas/EntityHit"
+        - type: object
+          properties:
+            recognizer:   { type: string, example: "StudentIdRecognizer" }
+            pattern_name: { type: string, nullable: true, example: "doane_d_prefix" }
+            pattern:      { type: string, nullable: true, example: "\\bD\\d{7}\\b" }
+            context_words:
+              type: array
+              items: { type: string }
+
+    RiskLevel:
+      type: string
+      enum: [LOW, MEDIUM, HIGH, CRITICAL]
+
+    SanitizeMode:
+      type: string
+      enum: [mask, redact, pseudonymize, exclude]
+      description: |
+        - mask: Replace with [ENTITY_TYPE] token. Best for LLM prompts.
+        - redact: Replace with ***. Best for logs.
+        - pseudonymize: Replace with consistent fake value. Best for RAG embeddings.
+        - exclude: Return null if ANY PII found. Drop the chunk entirely.
+
+    ScanResponse:
+      type: object
+      required: [pii_found, hit_count, risk_level, entity_types, hits, request_id]
+      properties:
+        pii_found:    { type: boolean }
+        hit_count:    { type: integer }
+        risk_level:   { $ref: "#/components/schemas/RiskLevel" }
+        entity_types:
+          type: array
+          items: { type: string }
+        hits:
+          type: array
+          items: { $ref: "#/components/schemas/EntityHit" }
+        request_id:   { type: string, format: uuid }
+        sandbox:      { type: boolean, description: "Present and true when PII_SANDBOX_MODE=true" }
+
+    SanitizeResponse:
+      type: object
+      required: [sanitized_text, excluded, pii_found, risk_level, hit_count, mode, request_id]
+      properties:
+        sanitized_text: { type: string, nullable: true }
+        excluded:       { type: boolean }
+        pii_found:      { type: boolean }
+        risk_level:     { $ref: "#/components/schemas/RiskLevel" }
+        entity_types:
+          type: array
+          items: { type: string }
+        hit_count:      { type: integer }
+        mode:           { $ref: "#/components/schemas/SanitizeMode" }
+        request_id:     { type: string, format: uuid }
+        sandbox:        { type: boolean }
+
+    PreflightResponse:
+      type: object
+      required: [safe_to_send, risk_level, hit_count, blocking_entities, warning_entities, recommendation, request_id]
+      properties:
+        safe_to_send:          { type: boolean }
+        risk_level:            { $ref: "#/components/schemas/RiskLevel" }
+        hit_count:             { type: integer }
+        blocking_entities:
+          type: array
+          items: { type: string }
+        warning_entities:
+          type: array
+          items: { type: string }
+        recommendation:        { type: string }
+        sanitized_suggestion:  { type: string, nullable: true }
+        request_id:            { type: string, format: uuid }
+        sandbox:               { type: boolean }
+
+    PolicyApplyResponse:
+      type: object
+      required: [policy, passed, action_taken, hit_count, risk_level, request_id]
+      properties:
+        policy:          { type: string }
+        passed:          { type: boolean }
+        action_taken:    { type: string, enum: [none, masked, redacted, pseudonymized, excluded] }
+        sanitized_text:  { type: string, nullable: true }
+        blocked_entities:
+          type: array
+          items: { type: string }
+        hit_count:       { type: integer }
+        risk_level:      { $ref: "#/components/schemas/RiskLevel" }
+        request_id:      { type: string, format: uuid }
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+paths:
+
+  /health:
+    get:
+      summary: Liveness probe
+      description: No auth required. K8s liveness probe target.
+      security: []
+      tags: [Health]
+      responses:
+        "200":
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:         { type: string, example: ok }
+                  service:        { type: string, example: pii-service }
+                  version:        { type: string, example: "1.0.0" }
+                  uptime_seconds: { type: number }
+
+  /health/deep:
+    get:
+      summary: Readiness probe — verifies Presidio is loaded
+      description: >
+        Runs a trivial Presidio scan to confirm the ML pipeline is warm.
+        Use this as the K8s readiness probe (not /health).
+        Returns 200 even in degraded mode (smaller spaCy model). Returns 503 if Presidio fails.
+        No auth required.
+      security: []
+      tags: [Health]
+      responses:
+        "200":
+          description: Presidio is ready (status may be "degraded" if fallback model is in use)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:         { type: string, enum: [ok, degraded] }
+                  presidio:       { type: string, example: ready }
+                  spacy_degraded: { type: boolean }
+                  service:        { type: string }
+                  version:        { type: string }
+                  uptime_seconds: { type: number }
+        "503":
+          description: Presidio failed to initialize
+
+  /metrics:
+    get:
+      summary: Prometheus metrics scrape
+      description: Returns Prometheus text exposition format. No external library required. No auth required.
+      security: []
+      tags: [Observability]
+      responses:
+        "200":
+          description: Prometheus text format
+          content:
+            "text/plain":
+              schema: { type: string }
+
+  /api/v1/entities:
+    get:
+      summary: All detectable entity types
+      tags: [Catalog]
+      responses:
+        "200":
+          description: Entity type catalog
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  presidio_defaults:
+                    type: array
+                    items: { type: string }
+                  education_custom:
+                    type: array
+                    items: { type: string }
+                  total: { type: integer }
+
+  /api/v1/policies:
+    get:
+      summary: Named policy catalog
+      tags: [Catalog]
+      responses:
+        "200":
+          description: Available named policies
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  policies:
+                    type: array
+                    items: { type: object }
+                  count: { type: integer }
+
+  /api/v1/schemas:
+    get:
+      summary: ERP/SIS schema profiles
+      description: >
+        Built-in field mapping profiles for Banner, Colleague, Salesforce, Ethos, Workday,
+        ServiceNow, Slate, Starfish, Canvas, and Microsoft Graph.
+        Specify a profile in /api/v1/process to enable field-name-aware PII detection.
+      tags: [Catalog]
+      responses:
+        "200":
+          description: Available schema profiles
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  schemas:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:         { type: string }
+                        description:  { type: string }
+                        field_count:  { type: integer }
+                        default_mode: { $ref: "#/components/schemas/SanitizeMode" }
+                        fields:       { type: object }
+                  count: { type: integer }
+
+  /api/v1/stats:
+    get:
+      summary: In-process telemetry snapshot
+      tags: [Observability]
+      responses:
+        "200":
+          description: Telemetry counters and gauges
+
+  /api/v1/stats/reset:
+    post:
+      summary: Reset telemetry counters
+      tags: [Observability]
+      responses:
+        "200":
+          description: Counters reset
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reset: { type: boolean }
+
+  /api/v1/config/reload:
+    post:
+      summary: Hot-reload PII_CONFIG_FILE from disk
+      tags: [Configuration]
+      responses:
+        "200":
+          description: Config reloaded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reloaded:          { type: boolean }
+                  entity_thresholds: { type: integer }
+                  custom_patterns:   { type: integer }
+                  schema_profiles:   { type: integer }
+
+  /api/v1/scan:
+    post:
+      summary: Detect PII — no modification
+      tags: [Detection]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text:
+                  type: string
+                  description: Input text to scan
+                  maxLength: 100000
+                exclude_entity_types:
+                  type: array
+                  items: { type: string }
+                subject_id:
+                  type: string
+                  description: "CCPA: hashed data subject identifier for audit trail"
+                destination:
+                  type: string
+                  description: "HIPAA: destination system label for audit trail"
+            examples:
+              basic:
+                value: { text: "Student D1234567 SSN 123-45-6789 jsmith@doane.edu" }
+      responses:
+        "200":
+          description: Scan result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ScanResponse" }
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/v1/scan/structured:
+    post:
+      summary: Scan JSON record field-by-field
+      tags: [Detection]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [record]
+              properties:
+                record:
+                  type: object
+                fields:
+                  type: array
+                  items: { type: string }
+                  description: Fields to scan. Defaults to all string fields.
+                exclude_entity_types:
+                  type: array
+                  items: { type: string }
+      responses:
+        "200":
+          description: Per-field scan report
+
+  /api/v1/sanitize:
+    post:
+      summary: Detect and sanitize a single text
+      tags: [Sanitization]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text:                 { type: string, maxLength: 100000 }
+                mode:                 { $ref: "#/components/schemas/SanitizeMode" }
+                exclude_entity_types:
+                  type: array
+                  items: { type: string }
+                subject_id:   { type: string }
+                destination:  { type: string }
+      responses:
+        "200":
+          description: Sanitized result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SanitizeResponse" }
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/v1/sanitize/batch:
+    post:
+      summary: Sanitize a list of texts
+      description: Max 500 texts per request (configurable via BATCH_SIZE_LIMIT).
+      tags: [Sanitization]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [texts]
+              properties:
+                texts:
+                  type: array
+                  items: { type: string }
+                  maxItems: 500
+                mode:                 { $ref: "#/components/schemas/SanitizeMode" }
+                exclude_entity_types:
+                  type: array
+                  items: { type: string }
+                include_excluded:     { type: boolean, default: true }
+      responses:
+        "200":
+          description: Batch results
+
+  /api/v1/sanitize/structured:
+    post:
+      summary: Sanitize specific fields of a JSON record
+      tags: [Sanitization]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [record]
+              properties:
+                record:               { type: object }
+                fields:
+                  type: array
+                  items: { type: string }
+                mode:                 { $ref: "#/components/schemas/SanitizeMode" }
+                exclude_entity_types:
+                  type: array
+                  items: { type: string }
+      responses:
+        "200":
+          description: Sanitized record
+
+  /api/v1/preflight:
+    post:
+      summary: AI safety check with recommendation
+      description: >
+        Scans text and returns a risk assessment with an actionable recommendation
+        before sending to an external LLM. Provides a masked suggestion if unsafe.
+      tags: [Detection]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text:        { type: string, maxLength: 100000 }
+                subject_id:  { type: string }
+                destination: { type: string }
+      responses:
+        "200":
+          description: Preflight result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PreflightResponse" }
+
+  /api/v1/policy/apply:
+    post:
+      summary: Apply a named policy to text or batch
+      tags: [Policy]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [policy]
+              properties:
+                policy:
+                  type: string
+                  enum: [ai_prompt, embedding, log_safe, export_internal, export_external, ferpa_strict, analytics]
+                text:
+                  type: string
+                  description: Single text (use either text or texts, not both)
+                texts:
+                  type: array
+                  items: { type: string }
+                  description: Batch of texts
+                exclude_entity_types:
+                  type: array
+                  items: { type: string }
+      responses:
+        "200":
+          description: Policy result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PolicyApplyResponse" }
+        "400":
+          description: Unknown policy or invalid input
+
+  /api/v1/process:
+    post:
+      summary: Generic entry point — text, record, or batch
+      description: >
+        Single endpoint for all platforms. Accepts text, a structured record, or a batch.
+        Supports named policies, schema profiles, and recursive nested traversal.
+      tags: [Sanitization]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text:
+                  type: string
+                  description: Single text mode
+                record:
+                  type: object
+                  description: Structured record mode
+                texts:
+                  type: array
+                  items: { type: string }
+                  description: Batch mode
+                fields:
+                  type: array
+                  items: { type: string }
+                mode:                 { $ref: "#/components/schemas/SanitizeMode" }
+                policy:               { type: string }
+                schema:
+                  type: string
+                  description: ERP schema profile name for field-hint-aware detection
+                  example: banner_student
+                exclude_entity_types:
+                  type: array
+                  items: { type: string }
+                include_excluded:     { type: boolean, default: true }
+                recursive:
+                  type: boolean
+                  default: false
+                  description: >
+                    When true, recursively sanitize all string values at any nesting depth.
+                    Useful for Ethos, ServiceNow, and other deeply nested payloads.
+                subject_id:           { type: string }
+                destination:          { type: string }
+      responses:
+        "200":
+          description: Processed result
+
+  /api/v1/file:
+    post:
+      summary: Upload and sanitize a file
+      description: >
+        Supported types: .csv, .tsv, .json, .jsonl, .txt (always),
+        .pdf (requires pdfplumber), .docx (requires python-docx), .xlsx (requires openpyxl).
+      tags: [File]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                mode:
+                  type: string
+                  default: mask
+                columns:
+                  type: string
+                  description: JSON array of column/field names to process
+                  example: '["name", "email", "notes"]'
+                exclude_entity_types:
+                  type: string
+                  description: JSON array of entity types to skip
+                include_excluded:
+                  type: string
+                  default: "true"
+      responses:
+        "200":
+          description: File processing results
+        "400":
+          description: File validation error
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "501":
+          description: Optional dependency missing (pdfplumber, python-docx, openpyxl)
+
+  /api/v1/explain:
+    post:
+      summary: Per-hit detection breakdown
+      description: >
+        Explains WHY each PII hit was flagged: which recognizer pattern matched,
+        what context words boosted the score, and the raw confidence score.
+        Requires Presidio. Returns 503 if unavailable.
+      tags: [Detection]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string, maxLength: 100000 }
+            examples:
+              with_pii:
+                value: { text: "Student D1234567 has SSN 123-45-6789" }
+      responses:
+        "200":
+          description: Explanation result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  text_length: { type: integer }
+                  hit_count:   { type: integer }
+                  hits:
+                    type: array
+                    items: { $ref: "#/components/schemas/ExplainHit" }
+                  request_id:  { type: string, format: uuid }
+        "400":
+          description: Invalid input
+        "503":
+          description: Presidio not available
+
+tags:
+  - name: Health
+    description: Liveness, readiness, and deep health checks
+  - name: Observability
+    description: Metrics, stats, and telemetry
+  - name: Catalog
+    description: Entity types, policies, and schema profiles
+  - name: Configuration
+    description: Dynamic config management
+  - name: Detection
+    description: PII scanning and risk assessment
+  - name: Sanitization
+    description: PII removal and pseudonymization
+  - name: Policy
+    description: Named policy application
+  - name: File
+    description: File upload and processing

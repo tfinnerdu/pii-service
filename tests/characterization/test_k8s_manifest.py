@@ -88,6 +88,21 @@ class TestDeploymentManifest:
                 "K8s will restart the pod if /health doesn't return 200."
             )
 
+    def test_readiness_probe_path_is_health_deep(self, deployment_doc):
+        """
+        Known-good: readiness probe uses /health/deep not /health.
+        /health/deep verifies Presidio is actually loaded before sending traffic.
+        /health returns 200 immediately before spaCy finishes loading.
+        """
+        containers = deployment_doc["spec"]["template"]["spec"]["containers"]
+        for container in containers:
+            probe = container.get("readinessProbe", {})
+            http = probe.get("httpGet", {})
+            assert http.get("path") == "/health/deep", (
+                f"Readiness probe path is '{http.get('path')}', expected '/health/deep'. "
+                "Using /health for readiness sends traffic to a pod before Presidio loads."
+            )
+
     def test_secret_key_ref_indentation(self, deployment_doc):
         """
         Footgun: secretKeyRef 'name' and 'key' must indent UNDER secretKeyRef,

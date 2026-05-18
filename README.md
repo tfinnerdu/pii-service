@@ -7,7 +7,7 @@ Built on [Microsoft Presidio](https://microsoft.github.io/presidio/) — all pro
 
 ## What it does
 
-- Detects 30+ PII entity types including education-sector types (Banner student IDs, FAFSA IDs, FERPA markers, immigration status, disability accommodations, veteran status)
+- Detects 35+ PII entity types including education-sector types (Banner student IDs, FAFSA IDs, FERPA markers, Title IX case IDs, IRB protocol numbers, financial aid awards, student account IDs, immigration status, disability accommodations, veteran status)
 - Sanitizes text via mask, redact, pseudonymize, or exclude modes
 - Provides AI preflight checks before sending data to external LLMs
 - Ingests CSV, TSV, JSON, JSONL, TXT, PDF, DOCX, and XLSX files
@@ -40,10 +40,12 @@ Service starts on **port 5900** by default. Visit `http://localhost:5900/health`
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/health` | Liveness/readiness — no auth required (K8s probes) |
+| GET | `/health` | Liveness — no auth required (K8s liveness probe) |
+| GET | `/health/deep` | Readiness with Presidio verification — no auth (K8s readiness probe) |
+| GET | `/metrics` | Prometheus text format telemetry — no auth |
 | GET | `/api/v1/entities` | All detectable entity types |
 | GET | `/api/v1/policies` | Named policy catalog |
-| GET | `/api/v1/schemas` | ERP schema profiles (Banner, Colleague, Salesforce, Ethos, n8n) |
+| GET | `/api/v1/schemas` | ERP schema profiles (Banner, Colleague, Salesforce, Ethos, Workday, ServiceNow, Slate, Starfish, Canvas, Microsoft Graph, n8n) |
 | GET | `/api/v1/stats` | In-process telemetry snapshot |
 | POST | `/api/v1/stats/reset` | Reset telemetry counters |
 | POST | `/api/v1/config/reload` | Hot-reload PII_CONFIG_FILE without pod restart |
@@ -54,8 +56,9 @@ Service starts on **port 5900** by default. Visit `http://localhost:5900/health`
 | POST | `/api/v1/sanitize/structured` | Sanitize specific fields of a JSON record |
 | POST | `/api/v1/preflight` | AI safety check with recommendation |
 | POST | `/api/v1/policy/apply` | Apply a named policy to text or batch |
-| POST | `/api/v1/process` | Generic entry point — text, record, or batch + optional policy + schema |
+| POST | `/api/v1/process` | Generic entry point — text, record, or batch + optional policy + schema + `recursive` |
 | POST | `/api/v1/file` | Upload and sanitize a file (CSV/TSV/JSON/JSONL/TXT/PDF/DOCX/XLSX) |
+| POST | `/api/v1/explain` | Per-hit detection breakdown (pattern, recognizer, context, score) |
 
 All endpoints except `/health` require `Authorization: Bearer <key>` or `X-API-Key: <key>` when `API_KEY` is set.
 
@@ -165,7 +168,7 @@ curl -X POST http://localhost:5900/api/v1/process \
   }'
 ```
 
-Built-in profiles: `banner_student`, `colleague_person`, `salesforce_contact`, `ethos_person`, `n8n_generic`, `conductor_ethos`.
+Built-in profiles: `banner_student`, `colleague_person`, `salesforce_contact`, `ethos_person`, `n8n_generic`, `conductor_ethos`, `workday_hr`, `servicenow_itsm`, `slate_crm`, `starfish_early_alert`, `canvas_lms`, `microsoft_graph`.
 
 Custom profiles can be added via `PII_CONFIG_FILE`.
 
@@ -214,6 +217,9 @@ curl -X POST http://localhost:5900/api/v1/config/reload -H "X-API-Key: $API_KEY"
 | `FILE_SIZE_LIMIT_MB` | `10` | Max file upload size |
 | `MAX_TEXT_LENGTH` | `100000` | Max characters per text input |
 | `PII_CONFIG_FILE` | *(empty)* | Path to JSON config for custom patterns/thresholds |
+| `PSEUDO_SECRET` | *(empty)* | HMAC-SHA256 seed for pseudonymization — prevents reversal attacks. Generate: `python -c "import secrets; print(secrets.token_hex(32))"` |
+| `PII_SANDBOX_MODE` | `false` | Return deterministic fake responses without Presidio — for CI/integration testing |
+| `PII_DECODE_ENCODED` | `false` | Decode URL-encoded or base64-encoded text before scanning |
 
 ---
 

@@ -20,6 +20,61 @@ import re
 
 _RECOGNIZER_SPECS = [
     {
+        "entity": "TITLE_IX_CASE_ID",
+        "name": "TitleIXCaseIdRecognizer",
+        "patterns": [
+            ("tix_case_id",    r"\bTIX[-_]\d{4}[-_]\d{4,6}\b",                            0.85),
+            ("tix_case_phrase", r"\bTitle\s+IX\s+(?:case|complaint|investigation)\s+#?\s*\d{3,8}\b", 0.8),
+        ],
+        "context": ["title ix", "titleix", "conduct", "complaint", "investigation", "respondent", "complainant"],
+    },
+    {
+        "entity": "IRB_PROTOCOL",
+        "name": "IrbProtocolRecognizer",
+        "patterns": [
+            ("irb_number",    r"\bIRB[-_#]?\s*\d{4}[-_]\d{3,6}\b",     0.85),
+            ("hs_protocol",   r"\bHS[-_]\d{4}[-_]\d{3,6}\b",            0.8),
+            ("irb_bare",      r"\bIRB[-_#]\s*\d{5,8}\b",                0.7),
+        ],
+        "context": ["irb", "institutional review board", "protocol", "study", "research", "human subjects"],
+    },
+    {
+        "entity": "FINANCIAL_AID_AWARD",
+        "name": "FinancialAidAwardRecognizer",
+        "patterns": [
+            ("named_award",
+             r"\b(?:Pell\s+Grant|Subsidized\s+Loan|Unsubsidized\s+Loan|Direct\s+(?:Subsidized|Unsubsidized|PLUS)\s+Loan|"
+             r"Federal\s+(?:Pell|SEOG|Work[- ]Study)|PLUS\s+Loan|Parent\s+PLUS|Grad\s+PLUS|"
+             r"Yellow\s+Ribbon\s+Grant|TEACH\s+Grant|Iraq\s+and\s+Afghanistan\s+Service\s+Grant)"
+             r"\s+(?:of\s+|amount[:\s]+)?\$[\d,]+(?:\.\d{2})?\b",
+             0.85),
+            ("award_dollar",
+             r"\b(?:award|disbursement|aid)\s+(?:amount|package)[:\s]+\$[\d,]+(?:\.\d{2})?\b",
+             0.7),
+        ],
+        "context": ["financial aid", "fafsa", "award letter", "disbursement", "aid package", "net price"],
+    },
+    {
+        "entity": "STUDENT_ACCOUNT_ID",
+        "name": "StudentAccountIdRecognizer",
+        "patterns": [
+            ("touchnet_id",   r"\bTN[-_]\d{8,12}\b",                          0.85),
+            ("cashnet_id",    r"\bCN[-_]\d{8,12}\b",                          0.85),
+            ("sar_id",        r"\bSAR[-_]\d{8,12}\b",                         0.75),
+            ("txn_explicit",  r"\b(?:transaction|payment)\s+(?:id|#)[:\s]+\d{8,16}\b", 0.8),
+        ],
+        "context": ["payment", "transaction", "billing", "touchnet", "cashnet", "accounts receivable", "student account"],
+    },
+    {
+        "entity": "LICENSE_PLATE",
+        "name": "LicensePlateRecognizer",
+        "patterns": [
+            ("us_plate",      r"\b[A-Z]{2,3}[-\s]?\d{2,4}[-\s]?[A-Z]{0,3}\b",  0.3),
+            ("plate_explicit", r"\b(?:plate|tag)\s+(?:#|number|no\.?)?[:\s]+[A-Z0-9]{4,8}\b", 0.75),
+        ],
+        "context": ["license plate", "license tag", "vehicle", "parking", "permit", "registration", "dmv", "towing"],
+    },
+    {
         "entity": "STUDENT_ID",
         "name": "StudentIdRecognizer",
         "patterns": [
@@ -180,6 +235,40 @@ def get_patterns_for_entity(entity_type: str) -> list[tuple[str, str, float]]:
         if spec["entity"] == entity_type:
             return list(spec["patterns"])
     return []
+
+
+# Context words for Presidio's built-in entity types (no custom spec above).
+# Passed to AnalyzerEngine.analyze(context=[...]) when field hints name these types.
+_PRESIDIO_CONTEXT: dict[str, list[str]] = {
+    "PERSON":            ["name", "student", "faculty", "staff", "person", "employee", "professor", "contact"],
+    "EMAIL_ADDRESS":     ["email", "contact", "address", "mail", "electronic mail"],
+    "PHONE_NUMBER":      ["phone", "call", "mobile", "cell", "contact", "fax", "telephone"],
+    "US_SSN":            ["ssn", "social security", "tax id", "identity", "identification"],
+    "CREDIT_CARD":       ["payment", "card", "billing", "credit", "charge"],
+    "LOCATION":          ["address", "city", "location", "campus", "building", "street", "zip"],
+    "DATE_TIME":         ["date", "time", "when", "scheduled", "appointment"],
+    "IP_ADDRESS":        ["ip", "server", "network", "host", "address"],
+    "US_PASSPORT":       ["passport", "travel", "immigration", "identity", "document"],
+    "US_DRIVER_LICENSE": ["license", "id", "driver", "identification", "dl"],
+    "US_BANK_NUMBER":    ["routing", "account", "bank", "ach", "direct deposit"],
+    "IBAN_CODE":         ["iban", "bank", "account", "international", "swift"],
+    "MEDICAL_LICENSE":   ["license", "npi", "dea", "medical", "provider", "prescriber"],
+    "NRP":               ["nationality", "race", "ethnicity", "citizenship", "demographic"],
+    "URL":               ["url", "link", "website", "href", "endpoint"],
+    "CRYPTO":            ["bitcoin", "wallet", "crypto", "address", "blockchain"],
+}
+
+
+def get_context_for_entity(entity_type: str) -> list[str]:
+    """
+    Return Presidio context-boost words for an entity type.
+    Checks custom recognizer specs first, then the built-in Presidio defaults dict.
+    Used to boost field-hint-aware scanning via AnalyzerEngine.analyze(context=...).
+    """
+    for spec in _RECOGNIZER_SPECS:
+        if spec["entity"] == entity_type:
+            return list(spec.get("context", []))
+    return list(_PRESIDIO_CONTEXT.get(entity_type, []))
 
 
 # ---------------------------------------------------------------------------

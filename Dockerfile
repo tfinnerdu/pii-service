@@ -26,5 +26,5 @@ ENV FLASK_ENV=production
 
 EXPOSE 5900
 
-# Pre-warm the spaCy model before accepting requests to avoid cold-start on first call
-CMD ["sh", "-c", "python -c 'from pii_guard import PiiGuard; g=PiiGuard(); g._ensure_initialized(); print(\"Model ready\")' && python app.py"]
+# Pre-warm the spaCy model, then serve with Gunicorn (2 workers x 4 threads = 8 concurrent requests)
+CMD ["sh", "-c", "python -c 'from pii_guard import PiiGuard; g=PiiGuard(); g._ensure_initialized(); print(\"Model ready\")' && gunicorn --workers 2 --threads 4 --bind 0.0.0.0:${PORT:-5900} --timeout 120 app:app"]

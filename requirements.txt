@@ -6,6 +6,7 @@ spacy==3.7.4
 en-core-web-lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.7.1/en_core_web_lg-3.7.1.tar.gz
 flask==3.0.3
 python-dotenv==1.0.1
+gunicorn==21.2.0
 
 # Optional: Extended file format support (install all for full file ingestion)
 # PDF text extraction

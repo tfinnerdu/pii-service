@@ -5,11 +5,15 @@ Designed for Doane University's AI platform. All processing is local via
 Microsoft Presidio — no text leaves the machine or the cluster.
 
 Endpoints:
-  GET  /health                       - Liveness/readiness (K8s probes)
+  GET  /health                       - Liveness/readiness (K8s probes, no auth)
+  GET  /health/deep                  - Readiness with Presidio warm-up verification (no auth)
+  GET  /metrics                      - Prometheus-format telemetry scrape target (no auth)
   GET  /api/v1/entities              - All detectable entity types
   GET  /api/v1/policies              - Named policy catalog
   GET  /api/v1/schemas               - Schema profiles (Banner, Colleague, Salesforce, Ethos, n8n)
   GET  /api/v1/stats                 - In-process telemetry (no raw PII)
+  POST /api/v1/stats/reset           - Reset in-memory telemetry counters
+  POST /api/v1/config/reload         - Hot-reload PII_CONFIG_FILE without pod restart
   POST /api/v1/scan                  - Detect PII, return hits (no sanitization)
   POST /api/v1/scan/structured       - Scan JSON record field-by-field
   POST /api/v1/sanitize              - Detect and sanitize a single text
@@ -19,16 +23,18 @@ Endpoints:
   POST /api/v1/policy/apply          - Apply a named policy
   POST /api/v1/process               - Generic process: raw text/record in, PII-safe out
   POST /api/v1/file                  - Sanitize uploaded CSV, JSON, PDF, DOCX, XLSX, TXT
-  POST /api/v1/config/reload         - Hot-reload PII_CONFIG_FILE without pod restart
-  POST /api/v1/stats/reset           - Reset in-memory telemetry counters
+  POST /api/v1/explain               - Per-hit detection breakdown (pattern, recognizer, score)
 """
 
+import base64
 import csv
 import io
 import json
 import logging
 import os
+import re
 import time
+import urllib.parse
 import uuid
 
 from flask import Flask, request, jsonify, g
@@ -93,6 +99,33 @@ def _check_text_length(text: str):
     return None
 
 
+# ---------------------------------------------------------------------------
+# Feature flags
+# ---------------------------------------------------------------------------
+
+_SANDBOX_MODE = os.getenv("PII_SANDBOX_MODE", "false").lower() == "true"
+_DECODE_ENCODED = os.getenv("PII_DECODE_ENCODED", "false").lower() == "true"
+
+
+def _preprocess_text(text: str) -> str:
+    """Optionally decode URL-encoded or base64-encoded payloads before PII scanning."""
+    if not _DECODE_ENCODED:
+        return text
+    # Try URL decode first (idempotent for plain text)
+    url_decoded = urllib.parse.unquote(text)
+    if url_decoded != text:
+        return url_decoded
+    # Try base64 decode if the value looks like base64 (4-char aligned, only base64 chars)
+    stripped = text.strip()
+    if len(stripped) >= 8 and len(stripped) % 4 == 0 and re.fullmatch(r"[A-Za-z0-9+/=]+", stripped):
+        try:
+            decoded = base64.b64decode(stripped, validate=True).decode("utf-8")
+            return decoded
+        except Exception:
+            pass
+    return text
+
+
 # Auth initialized at module load so the startup warning appears before first request
 with app.app_context():
     init_auth()
@@ -143,6 +176,115 @@ def health():
         "version": VERSION,
         "uptime_seconds": round(time.time() - _START_TIME, 1),
     })
+
+
+# ---------------------------------------------------------------------------
+# GET /health/deep — Presidio warm-up verification (K8s readiness probe)
+# ---------------------------------------------------------------------------
+
+@app.route("/health/deep")
+def health_deep():
+    """
+    Verifies Presidio is actually loaded and functional. Runs a trivial scan.
+    K8s readiness probe: use this instead of /health so the pod only receives
+    traffic after the spaCy model has finished loading.
+
+    Returns 503 if Presidio fails to initialize.
+    Returns 200 with status "degraded" if fallback spaCy model is in use.
+    """
+    guard = get_guard()
+    try:
+        guard._ensure_initialized()
+        # Run a trivial scan to confirm the analyzer pipeline is live
+        guard.scan("test probe text")
+        degraded = getattr(guard, "_degraded", False)
+        return jsonify({
+            "status": "degraded" if degraded else "ok",
+            "presidio": "ready",
+            "spacy_degraded": degraded,
+            "service": SERVICE,
+            "version": VERSION,
+            "uptime_seconds": round(time.time() - _START_TIME, 1),
+        }), 200
+    except Exception as exc:
+        logger.error("Health deep check failed: %s", exc)
+        return jsonify({
+            "status": "failed",
+            "presidio": "failed",
+            "error": "Presidio initialization failed — check spaCy model installation",
+            "service": SERVICE,
+            "version": VERSION,
+        }), 503
+
+
+# ---------------------------------------------------------------------------
+# GET /metrics — Prometheus text format (no auth required for scraping)
+# ---------------------------------------------------------------------------
+
+@app.route("/metrics")
+def metrics():
+    """
+    Prometheus-compatible scrape endpoint. Returns counters and gauges in the
+    Prometheus text exposition format. No external library required.
+    """
+    stats = audit.get_stats()
+    lines = [
+        "# HELP pii_requests_total Total PII requests processed",
+        "# TYPE pii_requests_total counter",
+        f"pii_requests_total {stats['total_requests']}",
+        "",
+        "# HELP pii_pii_hits_total Total PII entity hits detected across all requests",
+        "# TYPE pii_pii_hits_total counter",
+        f"pii_pii_hits_total {stats['total_pii_hits']}",
+        "",
+        "# HELP pii_excluded_total Total text chunks excluded (EXCLUDE mode or blocked by policy)",
+        "# TYPE pii_excluded_total counter",
+        f"pii_excluded_total {stats['total_excluded']}",
+        "",
+        "# HELP pii_clean_total Total requests with no PII detected",
+        "# TYPE pii_clean_total counter",
+        f"pii_clean_total {stats['total_clean']}",
+        "",
+        "# HELP pii_uptime_seconds Process uptime in seconds",
+        "# TYPE pii_uptime_seconds gauge",
+        f"pii_uptime_seconds {stats['uptime_seconds']}",
+        "",
+    ]
+
+    entity_counts = stats.get("entity_type_counts", {})
+    if entity_counts:
+        lines.append("# HELP pii_entity_type_total Hits per entity type")
+        lines.append("# TYPE pii_entity_type_total counter")
+        for et, cnt in sorted(entity_counts.items()):
+            lines.append(f'pii_entity_type_total{{entity_type="{et}"}} {cnt}')
+        lines.append("")
+
+    mode_counts = stats.get("mode_counts", {})
+    if mode_counts:
+        lines.append("# HELP pii_mode_total Requests per sanitize mode")
+        lines.append("# TYPE pii_mode_total counter")
+        for mode_val, cnt in sorted(mode_counts.items()):
+            lines.append(f'pii_mode_total{{mode="{mode_val}"}} {cnt}')
+        lines.append("")
+
+    risk_counts = stats.get("risk_level_counts", {})
+    if risk_counts:
+        lines.append("# HELP pii_risk_level_total Requests per risk level")
+        lines.append("# TYPE pii_risk_level_total counter")
+        for risk, cnt in sorted(risk_counts.items()):
+            lines.append(f'pii_risk_level_total{{risk_level="{risk}"}} {cnt}')
+        lines.append("")
+
+    endpoint_counts = stats.get("endpoint_counts", {})
+    if endpoint_counts:
+        lines.append("# HELP pii_endpoint_total Requests per endpoint")
+        lines.append("# TYPE pii_endpoint_total counter")
+        for ep, cnt in sorted(endpoint_counts.items()):
+            safe_ep = ep.replace('"', '\\"')
+            lines.append(f'pii_endpoint_total{{endpoint="{safe_ep}"}} {cnt}')
+        lines.append("")
+
+    return "\n".join(lines) + "\n", 200, {"Content-Type": "text/plain; version=0.0.4; charset=utf-8"}
 
 
 # ---------------------------------------------------------------------------
@@ -269,6 +411,8 @@ def scan():
     body = request.get_json(silent=True) or {}
     text = body.get("text", "")
     exclude_types = body.get("exclude_entity_types", [])
+    subject_id = body.get("subject_id")
+    destination = body.get("destination")
 
     if not isinstance(text, str):
         return error_response("'text' must be a string", "INVALID_INPUT", 400)
@@ -276,6 +420,15 @@ def scan():
     if err:
         return err
 
+    if _SANDBOX_MODE:
+        return jsonify({
+            "pii_found": True, "hit_count": 1, "risk_level": "MEDIUM",
+            "entity_types": ["PERSON"],
+            "hits": [{"entity_type": "PERSON", "start": 0, "end": 4, "score": 0.85, "risk_level": "MEDIUM"}],
+            "sandbox": True, "request_id": g.request_id,
+        })
+
+    text = _preprocess_text(text)
     guard = get_guard()
     result = guard.scan(text)
 
@@ -294,6 +447,8 @@ def scan():
         risk_level=result.risk_level.value,
         duration_ms=_duration_ms(),
         action="scan",
+        subject_id=subject_id,
+        destination=destination,
     )
 
     return jsonify({
@@ -409,6 +564,8 @@ def sanitize():
     text = body.get("text", "")
     mode_str = body.get("mode", "mask")
     exclude_types = body.get("exclude_entity_types", [])
+    subject_id = body.get("subject_id")
+    destination = body.get("destination")
 
     if not isinstance(text, str):
         return error_response("'text' must be a string", "INVALID_INPUT", 400)
@@ -420,6 +577,15 @@ def sanitize():
     if err:
         return err
 
+    if _SANDBOX_MODE:
+        return jsonify({
+            "sanitized_text": "[PERSON] placeholder for sandbox mode",
+            "excluded": False, "pii_found": True, "risk_level": "MEDIUM",
+            "entity_types": ["PERSON"], "hit_count": 1, "mode": mode_str,
+            "sandbox": True, "request_id": g.request_id,
+        })
+
+    text = _preprocess_text(text)
     guard = get_guard()
     result = guard.sanitize(text, mode=mode, exclude_entity_types=exclude_types or None)
 
@@ -435,6 +601,8 @@ def sanitize():
         risk_level=result.risk_level.value,
         duration_ms=_duration_ms(),
         action="exclude" if result.excluded else mode.value,
+        subject_id=subject_id,
+        destination=destination,
     )
 
     return jsonify({
@@ -643,6 +811,8 @@ def preflight():
     """
     body = request.get_json(silent=True) or {}
     text = body.get("text", "")
+    subject_id = body.get("subject_id")
+    destination = body.get("destination")
 
     if not isinstance(text, str):
         return error_response("'text' must be a string", "INVALID_INPUT", 400)
@@ -650,6 +820,16 @@ def preflight():
     if err:
         return err
 
+    if _SANDBOX_MODE:
+        return jsonify({
+            "safe_to_send": False, "risk_level": "MEDIUM", "hit_count": 1,
+            "blocking_entities": [], "warning_entities": ["PERSON"],
+            "recommendation": "Sandbox mode — no real scanning performed.",
+            "sanitized_suggestion": "[PERSON] placeholder for sandbox mode",
+            "sandbox": True, "request_id": g.request_id,
+        })
+
+    text = _preprocess_text(text)
     guard = get_guard()
     result = guard.preflight(text)
 
@@ -665,6 +845,8 @@ def preflight():
         risk_level=result.risk_level.value,
         duration_ms=_duration_ms(),
         action="preflight",
+        subject_id=subject_id,
+        destination=destination,
     )
 
     return jsonify({
@@ -904,6 +1086,9 @@ def process():
     schema_name = body.get("schema")
     exclude_types = body.get("exclude_entity_types", [])
     include_excluded = body.get("include_excluded", True)
+    recursive = body.get("recursive", False)
+    subject_id = body.get("subject_id")
+    destination = body.get("destination")
 
     # Validate: need at least one input
     if text is None and record is None and texts is None:
@@ -933,6 +1118,7 @@ def process():
     # Apply schema profile to set field hints / adjust exclude types
     schema = None
     schema_pass_throughs = list(exclude_types)
+    field_context_hints = None
     if schema_name:
         cfg = get_config()
         schema = cfg.get_schema_profile(schema_name)
@@ -947,6 +1133,8 @@ def process():
                 mode = SanitizeMode(schema["default_mode"])
             except ValueError:
                 pass
+        # Wire field hints into context-boosted scanning
+        field_context_hints = schema.get("field_hints") or None
 
     guard = get_guard()
 
@@ -1032,14 +1220,16 @@ def process():
         if not isinstance(record, dict):
             return error_response("'record' must be a JSON object", "INVALID_INPUT", 400)
 
-        # Apply schema field hints: if a field maps to a specific entity type,
-        # we mark all other types as excluded for that field via schema-aware scanning.
-        # For now, use standard sanitize_dict with the resolved field list.
-        target_fields = fields if isinstance(fields, list) else [
-            k for k, v in record.items() if isinstance(v, str)
-        ]
-
-        if policy:
+        if recursive:
+            # Deep traversal — sanitize all string values at any nesting depth
+            sanitized_record = guard.sanitize_nested(
+                record, mode=mode, exclude_entity_types=effective_excludes or None
+            )
+            excluded_fields = []
+        elif policy:
+            target_fields = fields if isinstance(fields, list) else [
+                k for k, v in record.items() if isinstance(v, str)
+            ]
             sanitized_record = {}
             excluded_fields = []
             for field_name in target_fields:
@@ -1058,8 +1248,15 @@ def process():
                 if k not in sanitized_record:
                     sanitized_record[k] = v
         else:
+            target_fields = fields if isinstance(fields, list) else [
+                k for k, v in record.items() if isinstance(v, str)
+            ]
             sanitized_record, excluded_fields = guard.sanitize_dict(
-                record, fields=target_fields, mode=mode, exclude_entity_types=effective_excludes or None
+                record,
+                fields=target_fields,
+                mode=mode,
+                exclude_entity_types=effective_excludes or None,
+                field_context_hints=field_context_hints,
             )
 
         audit.log_event(
@@ -1075,6 +1272,8 @@ def process():
             duration_ms=_duration_ms(),
             action=mode.value,
             policy_name=policy_name,
+            subject_id=subject_id,
+            destination=destination,
         )
 
         return jsonify({
@@ -1220,6 +1419,124 @@ def process_file():
         )
 
     return handler(guard, content, columns, mode, exclude_types, include_excluded, max_rows)
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/explain — per-hit detection breakdown
+# ---------------------------------------------------------------------------
+
+@app.route("/api/v1/explain", methods=["POST"])
+@require_api_key
+def explain():
+    """
+    Explain why each PII hit was flagged: pattern name, recognizer, context words, score.
+    Requires Presidio. Returns 503 if unavailable.
+
+    Body:
+      { "text": "Student D1234567 has SSN 123-45-6789" }
+
+    Response:
+      {
+        "text_length": 38,
+        "hit_count": 2,
+        "hits": [
+          {
+            "entity_type": "STUDENT_ID",
+            "start": 8, "end": 16, "score": 0.9, "risk_level": "MEDIUM",
+            "recognizer": "StudentIdRecognizer",
+            "pattern_name": "doane_d_prefix",
+            "pattern": "\\\\bD\\\\d{7}\\\\b",
+            "context_words": ["student", "id", ...]
+          }
+        ],
+        "request_id": "..."
+      }
+    """
+    body = request.get_json(silent=True) or {}
+    text = body.get("text", "")
+
+    if not isinstance(text, str):
+        return error_response("'text' must be a string", "INVALID_INPUT", 400)
+    err = _check_text_length(text)
+    if err:
+        return err
+
+    guard = get_guard()
+    try:
+        guard._ensure_initialized()
+    except RuntimeError as exc:
+        return error_response(str(exc), "DEPENDENCY_MISSING", 503)
+
+    text = _preprocess_text(text)
+
+    results = guard._analyzer.analyze(
+        text=text,
+        entities=guard.entities,
+        language="en",
+        score_threshold=guard.score_threshold,
+    )
+
+    from pii_guard.recognizers import _RECOGNIZER_SPECS
+    from pii_guard.models import entity_risk
+
+    explained = []
+    for r in results:
+        recognizer_name = None
+        pattern_name = None
+        pattern_regex = None
+        context_words = []
+
+        for spec in _RECOGNIZER_SPECS:
+            if spec["entity"] == r.entity_type:
+                recognizer_name = spec["name"]
+                context_words = spec.get("context", [])
+                matched_text = text[r.start:r.end]
+                for pname, patt, _ in spec["patterns"]:
+                    if re.search(patt, matched_text, re.IGNORECASE):
+                        pattern_name = pname
+                        pattern_regex = patt
+                        break
+                break
+
+        if recognizer_name is None:
+            # Presidio built-in recognizer — extract name from metadata if available
+            meta = getattr(r, "recognition_metadata", {}) or {}
+            recognizer_name = meta.get("recognizer_name", f"Presidio:{r.entity_type}")
+
+        explained.append({
+            "entity_type": r.entity_type,
+            "start": r.start,
+            "end": r.end,
+            "score": round(r.score, 3),
+            "risk_level": entity_risk(r.entity_type).value,
+            "recognizer": recognizer_name,
+            "pattern_name": pattern_name,
+            "pattern": pattern_regex,
+            "context_words": context_words,
+        })
+
+    explained.sort(key=lambda h: h["start"])
+
+    audit.log_event(
+        endpoint="/api/v1/explain",
+        request_id=g.request_id,
+        client_ip=request.remote_addr,
+        api_key_prefix=g.api_key_prefix,
+        mode="scan",
+        hit_count=len(explained),
+        excluded_count=0,
+        entity_types=list({h["entity_type"] for h in explained}),
+        risk_level="UNKNOWN",
+        duration_ms=_duration_ms(),
+        action="explain",
+    )
+
+    return jsonify({
+        "text_length": len(text),
+        "hit_count": len(explained),
+        "hits": explained,
+        "request_id": g.request_id,
+    })
 
 
 def _process_csv(guard, content: bytes, columns: list, mode, exclude_types, include_excluded, max_rows) -> tuple:

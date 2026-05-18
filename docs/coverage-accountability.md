@@ -11,19 +11,20 @@ No file ships without a bucket.
 
 | File | Bucket | Test / Reference |
 |---|---|---|
-| `app.py` | Unit-tested + Contract-pinned | `tests/integration/test_api_endpoints.py` (requires presidio), `tests/characterization/test_api_contract.py` (all endpoints including `/stats/reset`, `/config/reload`, `/schemas`, file error contracts) |
+| `app.py` | Unit-tested + Contract-pinned | `tests/integration/test_api_endpoints.py` (requires presidio), `tests/characterization/test_api_contract.py` (all endpoints including `/health/deep`, `/metrics`, `/api/v1/explain`, sandbox mode, new schema profiles, `/stats/reset`, `/config/reload`, file error contracts) |
 | `pii_guard/__init__.py` | Compile-verified | (no runtime behavior — re-exports) |
 | `pii_guard/models.py` | Unit-tested | indirectly via `tests/unit/test_guard.py` and `tests/unit/test_policy.py` (all tests use ScanResult, EntityHit, RiskLevel) |
-| `pii_guard/guard.py` | Unit-tested + Contract-pinned | `tests/unit/test_guard.py` (requires presidio), `tests/characterization/test_recognizer_patterns.py` |
-| `pii_guard/recognizers.py` | Unit-tested + Contract-pinned | `tests/unit/test_recognizers.py` (requires presidio), `tests/characterization/test_recognizer_patterns.py` |
+| `pii_guard/guard.py` | Unit-tested + Contract-pinned | `tests/unit/test_guard.py` (requires presidio), `tests/characterization/test_recognizer_patterns.py` (HMAC seed, new pseudo format fidelity) |
+| `pii_guard/recognizers.py` | Unit-tested + Contract-pinned | `tests/unit/test_recognizers.py` (requires presidio), `tests/characterization/test_recognizer_patterns.py` (all custom entities including TITLE_IX_CASE_ID, IRB_PROTOCOL, FINANCIAL_AID_AWARD, STUDENT_ACCOUNT_ID, LICENSE_PLATE; `get_context_for_entity()`) |
 | `pii_guard/policy.py` | Unit-tested + Contract-pinned | `tests/unit/test_policy.py`, `tests/characterization/test_api_contract.py` (policy catalog shape) |
-| `pii_guard/audit.py` | Unit-tested | `tests/unit/test_audit.py` (log_event, get_stats, reset_stats) |
+| `pii_guard/audit.py` | Unit-tested | `tests/unit/test_audit.py` (log_event, get_stats, reset_stats; subject_id and destination fields) |
 | `pii_guard/auth.py` | Unit-tested + Contract-pinned | `tests/unit/test_auth.py` (including edge cases: empty key, header precedence), `tests/characterization/test_api_contract.py` |
-| `pii_guard/config.py` | Contract-pinned | `tests/characterization/test_env_vars.py` (all env var names), `tests/characterization/test_api_contract.py` (schemas endpoint, config/reload endpoint) |
+| `pii_guard/config.py` | Contract-pinned | `tests/characterization/test_env_vars.py` (all env var names including PSEUDO_SECRET, PII_SANDBOX_MODE, PII_DECODE_ENCODED), `tests/characterization/test_api_contract.py` (schemas endpoint, 12 profiles, config/reload endpoint) |
 | `workers/conductor_pii_worker.py` | Contract-pinned | `tests/characterization/test_conductor_contracts.py` (task names, TASK_HANDLERS dict, input param names) |
-| `k8s/deployment.yaml` | Contract-pinned | `tests/characterization/test_k8s_manifest.py` (namespace, port, TLS, middleware, imagePullSecret) |
+| `k8s/deployment.yaml` | Contract-pinned | `tests/characterization/test_k8s_manifest.py` (namespace, port, TLS, middleware, imagePullSecret; readiness probe path /health/deep) |
 | `workflows/pii_scan_and_sanitize.json` | Contract-pinned | `tests/characterization/test_conductor_contracts.py` (required fields, task reference name, task order) |
 | `workflows/pii_ai_preflight_gate.json` | Contract-pinned | `tests/characterization/test_conductor_contracts.py` (required fields, preflight-before-sanitize order, JQ transform task) |
+| `openapi.yaml` | Manual-procedure | Review during any endpoint addition, removal, or schema change |
 | `n8n/pii_service_workflow.json` | Manual-procedure | TESTING.md §4 |
 | `examples/usage.py` | Manual-procedure | TESTING.md §5.1 |
 | `examples/ai_preflight.py` | Manual-procedure | TESTING.md §5.2 |

@@ -42,6 +42,12 @@ EXPECTED_ENV_VARS = {
     "PII_CONFIG_FILE",
     # Text length limit
     "MAX_TEXT_LENGTH",
+    # Pseudonymization security (HMAC seed)
+    "PSEUDO_SECRET",
+    # Sandbox mode (deterministic fake responses for CI/integration testing)
+    "PII_SANDBOX_MODE",
+    # Encoded payload preprocessing
+    "PII_DECODE_ENCODED",
     # Orkes Conductor integration (optional — standalone worker only)
     "CONDUCTOR_SERVER_URL",
     "CONDUCTOR_AUTH_KEY",

@@ -66,9 +66,10 @@ Hit `/api/v1/policies` — verify all 7 policies appear: `ai_prompt`, `embedding
 GET http://localhost:5900/api/v1/schemas
 ```
 
-Expected: 6 built-in profiles appear — `banner_student`, `colleague_person`, `salesforce_contact`,
-`ethos_person`, `n8n_generic`, `conductor_ethos`. Each has `name`, `description`, `field_count`,
-`default_mode`, and `fields` map.
+Expected: 12 built-in profiles appear — `banner_student`, `colleague_person`, `salesforce_contact`,
+`ethos_person`, `n8n_generic`, `conductor_ethos`, `workday_hr`, `servicenow_itsm`, `slate_crm`,
+`starfish_early_alert`, `canvas_lms`, `microsoft_graph`. Each has `name`, `description`,
+`field_count`, `default_mode`, and `fields` map.
 
 ### §2.6 Generic process endpoint
 
@@ -79,6 +80,35 @@ Body: { "schema": "banner_student", "record": { "SPRIDEN_LAST_NAME": "Smith", "S
 
 Expected: `input_type: "record"`, `schema_applied: "banner_student"`, `sanitized_record.SPBPERS_SSN` contains `[US_SSN]`.
 GPA (non-string) should pass through unchanged.
+
+### §2.7 Deep health check
+
+```
+GET http://localhost:5900/health/deep
+```
+
+Expected: `{"status":"ok","presidio":"ready","spacy_degraded":false,...}` after warm-up.
+If spaCy en_core_web_lg is missing and en_core_web_sm loaded instead: `"status":"degraded","spacy_degraded":true`.
+If Presidio fails entirely: 503.
+
+### §2.8b Prometheus metrics
+
+```
+GET http://localhost:5900/metrics
+```
+
+Expected: Prometheus text format (plain text, not JSON). Required metrics: `pii_requests_total`, `pii_pii_hits_total`, `pii_excluded_total`, `pii_clean_total`, `pii_uptime_seconds`.
+After making a few scan requests, verify the counters increment.
+
+### §2.8c Explain endpoint
+
+```
+POST http://localhost:5900/api/v1/explain
+Body: { "text": "Student D1234567 has SSN 123-45-6789" }
+```
+
+Expected: `hit_count: 2`, each hit has `entity_type`, `recognizer`, `pattern_name`, `pattern`, `context_words`.
+Verify: `STUDENT_ID` hit shows `recognizer: "StudentIdRecognizer"`, `pattern_name: "doane_d_prefix"`.
 
 ### §2.7 Stats and telemetry
 

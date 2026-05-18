@@ -90,8 +90,10 @@ def log_event(
     risk_level: str,
     batch_size: int = 1,
     duration_ms: float,
-    action: str,                    # "scan" | "sanitize" | "exclude" | "reject" | "preflight"
+    action: str,                        # "scan" | "sanitize" | "exclude" | "reject" | "preflight"
     policy_name: Optional[str] = None,
+    subject_id: Optional[str] = None,   # CCPA: data subject identifier (hashed by caller)
+    destination: Optional[str] = None,  # HIPAA: destination system or caller-context label
 ) -> None:
     """
     Emit one structured audit event per request (never one per fan-out item).
@@ -112,6 +114,8 @@ def log_event(
         "risk_level": risk_level,
         "duration_ms": round(duration_ms, 2),
         "policy": policy_name,
+        "subject_id": subject_id,
+        "destination": destination,
     }
     logger.info(json.dumps(event))
 

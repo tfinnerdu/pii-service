@@ -210,6 +210,126 @@ class TestFafsaIdPatterns:
 # US_SSN (Presidio built-in) — characterization of known behavior — pinned 2025-05
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# TITLE_IX_CASE_ID patterns — pinned 2025-05
+# ---------------------------------------------------------------------------
+
+class TestTitleIXCaseIdPatterns:
+    """
+    Known-good: TIX case ID format is TIX-YYYY-NNNNNN.
+    If changed, update Title IX case management integration documentation.
+    """
+    TIX_ID = r"\bTIX[-_]\d{4}[-_]\d{4,6}\b"
+    TIX_PHRASE = r"\bTitle\s+IX\s+(?:case|complaint|investigation)\s+#?\s*\d{3,8}\b"
+
+    def test_tix_id_format_matches(self):
+        assert _matches(self.TIX_ID, "TIX-2024-001234")
+
+    def test_tix_id_underscore_matches(self):
+        assert _matches(self.TIX_ID, "TIX_2023_5678")
+
+    def test_tix_id_short_seq_does_not_match(self):
+        assert not _matches(self.TIX_ID, "TIX-2024-123")  # only 3 digits in seq
+
+    def test_tix_phrase_matches_case(self):
+        assert _matches(self.TIX_PHRASE, "Title IX case 20240001 is pending")
+
+    def test_tix_phrase_matches_complaint(self):
+        assert _matches(self.TIX_PHRASE, "Title IX complaint #1234 received")
+
+    def test_generic_number_without_tix_does_not_match(self):
+        assert not _matches(self.TIX_ID, "20241234")  # no TIX prefix
+
+
+# ---------------------------------------------------------------------------
+# IRB_PROTOCOL patterns — pinned 2025-05
+# ---------------------------------------------------------------------------
+
+class TestIrbProtocolPatterns:
+    """
+    Known-good: IRB protocol IDs follow IRB-YYYY-NNN format.
+    If changed, update research compliance documentation.
+    """
+    IRB_PATTERN = r"\bIRB[-_#]?\s*\d{4}[-_]\d{3,6}\b"
+    HS_PATTERN = r"\bHS[-_]\d{4}[-_]\d{3,6}\b"
+
+    def test_irb_dashed_matches(self):
+        assert _matches(self.IRB_PATTERN, "IRB-2024-001")
+
+    def test_irb_hash_matches(self):
+        assert _matches(self.IRB_PATTERN, "IRB#2024-001")
+
+    def test_irb_space_matches(self):
+        assert _matches(self.IRB_PATTERN, "IRB 2024-001")
+
+    def test_hs_protocol_matches(self):
+        assert _matches(self.HS_PATTERN, "HS-2024-001")
+
+    def test_random_number_does_not_match_irb(self):
+        assert not _matches(self.IRB_PATTERN, "12345678")  # no IRB prefix
+
+
+# ---------------------------------------------------------------------------
+# FINANCIAL_AID_AWARD patterns — pinned 2025-05
+# ---------------------------------------------------------------------------
+
+class TestFinancialAidAwardPatterns:
+    NAMED_AWARD = (
+        r"\b(?:Pell\s+Grant|Subsidized\s+Loan|Unsubsidized\s+Loan|Direct\s+(?:Subsidized|Unsubsidized|PLUS)\s+Loan|"
+        r"Federal\s+(?:Pell|SEOG|Work[- ]Study)|PLUS\s+Loan|Parent\s+PLUS|Grad\s+PLUS|"
+        r"Yellow\s+Ribbon\s+Grant|TEACH\s+Grant|Iraq\s+and\s+Afghanistan\s+Service\s+Grant)"
+        r"\s+(?:of\s+|amount[:\s]+)?\$[\d,]+(?:\.\d{2})?\b"
+    )
+
+    def test_pell_grant_with_amount_matches(self):
+        assert _matches(self.NAMED_AWARD, "Pell Grant of $7,395.00")
+
+    def test_subsidized_loan_matches(self):
+        assert _matches(self.NAMED_AWARD, "Subsidized Loan $3,500")
+
+    def test_plus_loan_matches(self):
+        assert _matches(self.NAMED_AWARD, "PLUS Loan $10,000")
+
+    def test_pell_grant_without_amount_does_not_match(self):
+        assert not _matches(self.NAMED_AWARD, "Pell Grant eligibility determined")
+
+
+# ---------------------------------------------------------------------------
+# New entity types registered in DOANE_RECOGNIZER_REGISTRY — pinned 2025-05
+# ---------------------------------------------------------------------------
+
+class TestNewEntityRegistration:
+    """Verify all 5 new entity types are in the exported registry."""
+    NEW_ENTITIES = {
+        "TITLE_IX_CASE_ID",
+        "IRB_PROTOCOL",
+        "FINANCIAL_AID_AWARD",
+        "STUDENT_ACCOUNT_ID",
+        "LICENSE_PLATE",
+    }
+
+    def test_all_new_entities_in_registry(self):
+        from pii_guard.recognizers import DOANE_RECOGNIZER_REGISTRY
+        missing = self.NEW_ENTITIES - set(DOANE_RECOGNIZER_REGISTRY)
+        assert not missing, f"New entities not in registry: {missing}"
+
+    def test_get_context_for_entity_returns_list(self):
+        from pii_guard.recognizers import get_context_for_entity
+        ctx = get_context_for_entity("TITLE_IX_CASE_ID")
+        assert isinstance(ctx, list)
+        assert len(ctx) > 0
+
+    def test_get_context_for_presidio_builtin(self):
+        from pii_guard.recognizers import get_context_for_entity
+        ctx = get_context_for_entity("US_SSN")
+        assert isinstance(ctx, list)
+        assert "ssn" in ctx or "social security" in ctx
+
+    def test_get_context_for_unknown_entity_returns_empty(self):
+        from pii_guard.recognizers import get_context_for_entity
+        assert get_context_for_entity("NONEXISTENT_TYPE") == []
+
+
 class TestSsnPresidioCharacterization:
     """
     Presidio's built-in US_SSN recognizer catches dashed and plain formats.

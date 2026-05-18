@@ -448,3 +448,194 @@ class TestFileUploadErrorContract:
         resp = client.post("/api/v1/file", data=data, content_type="multipart/form-data")
         assert resp.status_code == 400
         assert resp.get_json()["code"] == "FILE_TOO_LARGE"
+
+
+# ---------------------------------------------------------------------------
+# /health/deep contract — pinned 2025-05
+# ---------------------------------------------------------------------------
+
+class TestHealthDeepContract:
+    """
+    Known-good: /health/deep verifies Presidio is loaded.
+    Returns 200 (ok or degraded) when functional, 503 when broken.
+    No auth required — K8s readiness probe must be able to call this.
+    """
+    EXPECTED_KEYS = {"status", "presidio", "spacy_degraded", "service", "version", "uptime_seconds"}
+
+    @_presidio_required
+    def test_health_deep_returns_200_when_presidio_ready(self, client):
+        resp = client.get("/health/deep")
+        assert resp.status_code == 200, (
+            "/health/deep must return 200 when Presidio is working. "
+            "K8s readiness probe will fail otherwise."
+        )
+
+    @_presidio_required
+    def test_health_deep_response_shape(self, client):
+        data = client.get("/health/deep").get_json()
+        missing = self.EXPECTED_KEYS - set(data.keys())
+        assert not missing, f"/health/deep missing keys: {missing}"
+
+    @_presidio_required
+    def test_health_deep_presidio_is_ready(self, client):
+        data = client.get("/health/deep").get_json()
+        assert data["presidio"] == "ready"
+
+    @_presidio_required
+    def test_health_deep_no_auth_required(self, client):
+        """Readiness probe must work without any auth header."""
+        resp = client.get("/health/deep")
+        assert resp.status_code != 401 and resp.status_code != 403, (
+            "/health/deep must not require auth — K8s readiness probe cannot provide tokens."
+        )
+
+
+# ---------------------------------------------------------------------------
+# /metrics contract — pinned 2025-05
+# ---------------------------------------------------------------------------
+
+class TestMetricsContract:
+    """
+    Known-good: /metrics returns Prometheus text format.
+    If metric names change, update Prometheus scrape config and Grafana dashboards.
+    """
+    REQUIRED_METRICS = [
+        "pii_requests_total",
+        "pii_pii_hits_total",
+        "pii_excluded_total",
+        "pii_clean_total",
+        "pii_uptime_seconds",
+    ]
+
+    def test_metrics_returns_200(self, client):
+        resp = client.get("/metrics")
+        assert resp.status_code == 200
+
+    def test_metrics_content_type_is_text_plain(self, client):
+        resp = client.get("/metrics")
+        assert "text/plain" in resp.content_type, (
+            "/metrics must return text/plain for Prometheus compatibility. "
+            "If this changes, update the Prometheus scrape job config."
+        )
+
+    def test_metrics_contains_required_metric_names(self, client):
+        text = client.get("/metrics").data.decode()
+        for metric in self.REQUIRED_METRICS:
+            assert metric in text, (
+                f"Required Prometheus metric '{metric}' missing from /metrics output. "
+                "Update Grafana dashboards if metric names change."
+            )
+
+    def test_metrics_no_auth_required(self, client):
+        resp = client.get("/metrics")
+        assert resp.status_code != 401
+
+
+# ---------------------------------------------------------------------------
+# /api/v1/explain contract — pinned 2025-05
+# ---------------------------------------------------------------------------
+
+class TestExplainContract:
+    """
+    Known-good: /api/v1/explain returns per-hit detection breakdown.
+    Requires Presidio. Shape must remain stable for debugging tools.
+    """
+    REQUIRED_HIT_KEYS = {"entity_type", "start", "end", "score", "risk_level", "recognizer"}
+    REQUIRED_TOP_KEYS = {"text_length", "hit_count", "hits", "request_id"}
+
+    @_presidio_required
+    def test_explain_returns_200(self, client):
+        resp = client.post("/api/v1/explain", json={"text": "test text"})
+        assert resp.status_code == 200
+
+    @_presidio_required
+    def test_explain_response_shape(self, client):
+        data = client.post("/api/v1/explain", json={"text": "test text"}).get_json()
+        missing = self.REQUIRED_TOP_KEYS - set(data.keys())
+        assert not missing, f"/api/v1/explain missing top-level keys: {missing}"
+
+    @_presidio_required
+    def test_explain_hit_objects_have_required_keys(self, client):
+        data = client.post(
+            "/api/v1/explain", json={"text": "Student D1234567 is enrolled"}
+        ).get_json()
+        for hit in data.get("hits", []):
+            missing = self.REQUIRED_HIT_KEYS - set(hit.keys())
+            assert not missing, f"Explain hit object missing keys: {missing}"
+
+    def test_explain_invalid_input_returns_400(self, client):
+        resp = client.post("/api/v1/explain", json={"text": 12345})
+        assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Sandbox mode contract — pinned 2025-05
+# ---------------------------------------------------------------------------
+
+class TestSandboxContract:
+    """
+    Known-good: PII_SANDBOX_MODE=true returns fake responses without Presidio.
+    All sandbox responses must include "sandbox": true.
+    """
+
+    @pytest.fixture(autouse=True)
+    def enable_sandbox(self, monkeypatch):
+        monkeypatch.setenv("PII_SANDBOX_MODE", "true")
+        import app as _app
+        _app._SANDBOX_MODE = True
+        yield
+        _app._SANDBOX_MODE = False
+
+    def test_scan_sandbox_returns_200(self, client):
+        resp = client.post("/api/v1/scan", json={"text": "some text"})
+        assert resp.status_code == 200
+
+    def test_scan_sandbox_flag_present(self, client):
+        data = client.post("/api/v1/scan", json={"text": "some text"}).get_json()
+        assert data.get("sandbox") is True, (
+            "Sandbox responses must include 'sandbox': true so callers can detect they "
+            "are NOT receiving real PII scan results."
+        )
+
+    def test_sanitize_sandbox_flag_present(self, client):
+        data = client.post("/api/v1/sanitize", json={"text": "some text"}).get_json()
+        assert data.get("sandbox") is True
+
+    def test_preflight_sandbox_flag_present(self, client):
+        data = client.post("/api/v1/preflight", json={"text": "some text"}).get_json()
+        assert data.get("sandbox") is True
+
+
+# ---------------------------------------------------------------------------
+# New schema profiles contract — pinned 2025-05
+# ---------------------------------------------------------------------------
+
+class TestNewSchemaProfilesContract:
+    """
+    Known-good: 6 new schema profiles added in 2025-05 batch.
+    Shape contract identical to existing profiles.
+    """
+    NEW_PROFILES = {
+        "workday_hr", "servicenow_itsm", "slate_crm",
+        "starfish_early_alert", "canvas_lms", "microsoft_graph",
+    }
+
+    def test_all_new_profiles_appear_in_schemas_endpoint(self, client):
+        data = client.get("/api/v1/schemas").get_json()
+        names = {s["name"] for s in data["schemas"]}
+        missing = self.NEW_PROFILES - names
+        assert not missing, f"New schema profiles not returned by /api/v1/schemas: {missing}"
+
+    def test_total_schema_count_at_least_12(self, client):
+        data = client.get("/api/v1/schemas").get_json()
+        assert data["count"] >= 12, (
+            f"Expected at least 12 schema profiles, got {data['count']}. "
+            "If a profile was removed, update this test and the README."
+        )
+
+    def test_new_profiles_have_required_keys(self, client):
+        data = client.get("/api/v1/schemas").get_json()
+        for schema in data["schemas"]:
+            if schema["name"] in self.NEW_PROFILES:
+                for key in ("name", "description", "field_count", "default_mode", "fields"):
+                    assert key in schema, f"Schema '{schema['name']}' missing key '{key}'"
