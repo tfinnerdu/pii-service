@@ -1,0 +1,49 @@
+{
+  "name": "pii_ai_preflight_gate",
+  "description": "AI safety gate: run preflight check before any LLM call. If not safe, sanitize first. Use this as a sub-workflow before calling Claude, GPT, or any external AI.",
+  "version": 1,
+  "inputParameters": ["text", "allow_sanitized_fallback"],
+  "outputParameters": {
+    "safe_text": "${decide_ref.output.safe_text}",
+    "was_sanitized": "${decide_ref.output.was_sanitized}",
+    "risk_level": "${preflight_ref.output.risk_level}",
+    "safe_to_send_original": "${preflight_ref.output.safe_to_send}"
+  },
+  "tasks": [
+    {
+      "name": "pii_preflight",
+      "taskReferenceName": "preflight_ref",
+      "type": "SIMPLE",
+      "inputParameters": {
+        "text": "${workflow.input.text}"
+      }
+    },
+    {
+      "name": "pii_sanitize_text",
+      "taskReferenceName": "sanitize_ref",
+      "type": "SIMPLE",
+      "inputParameters": {
+        "text": "${workflow.input.text}",
+        "policy": "ai_prompt"
+      }
+    },
+    {
+      "name": "decide_output",
+      "taskReferenceName": "decide_ref",
+      "type": "JSON_JQ_TRANSFORM",
+      "inputParameters": {
+        "preflight": "${preflight_ref.output}",
+        "sanitize": "${sanitize_ref.output}",
+        "original": "${workflow.input.text}",
+        "allow_fallback": "${workflow.input.allow_sanitized_fallback}",
+        "queryExpression": "if .preflight.safe_to_send then {safe_text: .original, was_sanitized: false} else {safe_text: .sanitize.sanitized_text, was_sanitized: true} end"
+      }
+    }
+  ],
+  "schemaVersion": 2,
+  "restartable": true,
+  "ownerEmail": "ai-platform@doane.edu",
+  "timeoutPolicy": "TIME_OUT_WF",
+  "timeoutSeconds": 60,
+  "description": "Sub-workflow: include this in any workflow that sends text to an external AI service. It gates on PII risk and falls back to sanitized text if needed."
+}

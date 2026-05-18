@@ -1,0 +1,105 @@
+pii-service - Common Commands
+==============================================================================
+
+Setup
+------
+cd C:\doane\code\pii-service
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+
+Start local (normal)
+---------------------
+.\start-local.ps1
+
+Start local (force reinstall deps)
+------------------------------------
+.\start-local.ps1 -ForceDeps
+
+Run all tests
+--------------
+.venv\Scripts\pytest tests/ -v
+
+Run only unit tests (fast, no integration)
+-------------------------------------------
+.venv\Scripts\pytest tests/unit/ -v
+
+Run only characterization tests
+---------------------------------
+.venv\Scripts\pytest tests/characterization/ -v
+
+Run only integration tests
+---------------------------
+.venv\Scripts\pytest tests/integration/ -v
+
+Run tests with coverage report
+--------------------------------
+.venv\Scripts\pytest tests/ --cov=pii_guard --cov=app --cov-report=html
+# then open htmlcov/index.html
+
+Quick health check (local)
+---------------------------
+curl http://localhost:5900/health
+
+Scan a text (local)
+--------------------
+curl -X POST http://localhost:5900/api/v1/scan ^
+     -H "Content-Type: application/json" ^
+     -d "{\"text\": \"Student D1234567 SSN 123-45-6789\"}"
+
+Sanitize with mask mode (local)
+---------------------------------
+curl -X POST http://localhost:5900/api/v1/sanitize ^
+     -H "Content-Type: application/json" ^
+     -d "{\"text\": \"John Smith SSN 123-45-6789\", \"mode\": \"mask\"}"
+
+Preflight check (local)
+------------------------
+curl -X POST http://localhost:5900/api/v1/preflight ^
+     -H "Content-Type: application/json" ^
+     -d "{\"text\": \"SSN 123-45-6789\"}"
+
+Apply named policy (local)
+---------------------------
+curl -X POST http://localhost:5900/api/v1/policy/apply ^
+     -H "Content-Type: application/json" ^
+     -d "{\"policy\": \"ai_prompt\", \"text\": \"John Smith SSN 123-45-6789\"}"
+
+Sanitize a CSV file (local)
+-----------------------------
+curl -X POST http://localhost:5900/api/v1/file ^
+     -F "file=@test.csv" ^
+     -F "mode=mask" ^
+     -F "columns=[\"ssn\",\"name\"]"
+
+List policies
+--------------
+curl http://localhost:5900/api/v1/policies
+
+View stats
+-----------
+curl http://localhost:5900/api/v1/stats
+
+Start Conductor worker (separate process)
+------------------------------------------
+.venv\Scripts\python workers\conductor_pii_worker.py
+
+K8s: apply manifests
+---------------------
+kubectl apply -f k8s/deployment.yaml
+
+K8s: check pod status
+----------------------
+kubectl get pods -n prod -l app=pii-service
+
+K8s: view logs
+---------------
+kubectl logs -n prod -l app=pii-service --tail=50
+
+K8s: force pod restart
+-----------------------
+kubectl rollout restart deployment/pii-service -n prod
+
+Docker: build and push
+-----------------------
+docker build -t doaneu/pii-service:latest .
+docker push doaneu/pii-service:latest

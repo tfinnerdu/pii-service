@@ -1,0 +1,131 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pii-service
+  namespace: prod
+  labels:
+    app: pii-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pii-service
+  template:
+    metadata:
+      labels:
+        app: pii-service
+    spec:
+      imagePullSecrets:
+        - name: regcred
+      containers:
+        - name: pii-service
+          image: doaneu/pii-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 5900
+          env:
+            - name: PORT
+              value: "5900"
+            - name: FLASK_ENV
+              value: "production"
+            - name: PII_USE_SPACY
+              value: "true"
+            - name: PII_SCORE_THRESHOLD
+              valueFrom:
+                secretKeyRef:
+                  name: pii-service-secret
+                  key: PII_SCORE_THRESHOLD
+            - name: API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: pii-service-secret
+                  key: API_KEY
+          resources:
+            requests:
+              memory: "768Mi"    # spaCy en_core_web_lg is ~750MB in memory
+              cpu: "250m"
+            limits:
+              memory: "1.5Gi"
+              cpu: "1000m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5900
+            initialDelaySeconds: 45   # spaCy model load time
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5900
+            initialDelaySeconds: 45
+            periodSeconds: 10
+            failureThreshold: 6       # Allow up to 60s for model warm-up
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pii-service
+  namespace: prod
+spec:
+  selector:
+    app: pii-service
+  ports:
+    - port: 5900
+      targetPort: 5900
+
+---
+# Traefik strip-prefix middleware — Flask always sees clean paths
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: prod-pii-service-prefix
+  namespace: prod
+spec:
+  stripPrefix:
+    prefixes:
+      - /prod/pii-service
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: pii-service
+  namespace: prod
+  annotations:
+    kubernetes.io/ingress.class: traefik
+    cert-manager.io/cluster-issuer: prod-letsencrypt
+    traefik.ingress.kubernetes.io/router.middlewares: prod-prod-pii-service-prefix@kubernetescrd
+spec:
+  tls:
+    - hosts:
+        - du-int.doane.edu
+      secretName: wildcard-doane-tls
+  rules:
+    - host: du-int.doane.edu
+      http:
+        paths:
+          - path: /prod/pii-service
+            pathType: Prefix
+            backend:
+              service:
+                name: pii-service
+                port:
+                  number: 5900
+
+---
+# Secret manifest — values must be applied separately (never commit real values)
+# kubectl create secret generic pii-service-secret \
+#   --namespace=prod \
+#   --from-literal=PII_SCORE_THRESHOLD=0.5 \
+#   --from-literal=API_KEY=<generated-key>
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pii-service-secret
+  namespace: prod
+type: Opaque
+stringData:
+  PII_SCORE_THRESHOLD: "0.5"
+  API_KEY: "REPLACE_WITH_REAL_KEY"

@@ -1,0 +1,125 @@
+{
+  "name": "PII Service - Sanitize Before AI",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "sanitize-before-ai",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5900/api/v1/preflight",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Authorization", "value": "Bearer {{ $env.PII_SERVICE_API_KEY }}" }
+          ]
+        },
+        "sendBody": true,
+        "bodyContentType": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $json.text }) }}",
+        "options": {}
+      },
+      "id": "pii-preflight",
+      "name": "PII Preflight Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [460, 300],
+      "notes": "Checks if text is safe to send to an AI service without modification"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.safe_to_send }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "safe-to-send-check",
+      "name": "Is Safe to Send?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5900/api/v1/policy/apply",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Authorization", "value": "Bearer {{ $env.PII_SERVICE_API_KEY }}" }
+          ]
+        },
+        "sendBody": true,
+        "bodyContentType": "json",
+        "jsonBody": "={{ JSON.stringify({ policy: 'ai_prompt', text: $('Webhook Trigger').item.json.text }) }}",
+        "options": {}
+      },
+      "id": "pii-sanitize",
+      "name": "Sanitize with ai_prompt Policy",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [900, 420],
+      "notes": "Applies the ai_prompt policy: masks personal data, blocks SSN/financial/immigration"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ safe_text: $json.sanitized_text, was_sanitized: true, risk_level: $('PII Preflight Check').item.json.risk_level, blocked_entities: $('PII Preflight Check').item.json.blocking_entities }) }}"
+      },
+      "id": "respond-sanitized",
+      "name": "Respond Sanitized",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1120, 420]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ safe_text: $('Webhook Trigger').item.json.text, was_sanitized: false, risk_level: $json.risk_level }) }}"
+      },
+      "id": "respond-original",
+      "name": "Respond Original (Safe)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [900, 180]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [[ { "node": "PII Preflight Check", "type": "main", "index": 0 } ]]
+    },
+    "PII Preflight Check": {
+      "main": [[ { "node": "Is Safe to Send?", "type": "main", "index": 0 } ]]
+    },
+    "Is Safe to Send?": {
+      "main": [
+        [ { "node": "Respond Original (Safe)", "type": "main", "index": 0 } ],
+        [ { "node": "Sanitize with ai_prompt Policy", "type": "main", "index": 0 } ]
+      ]
+    },
+    "Sanitize with ai_prompt Policy": {
+      "main": [[ { "node": "Respond Sanitized", "type": "main", "index": 0 } ]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "staticData": null,
+  "meta": {
+    "description": "PII preflight gate workflow. Import into n8n and set PII_SERVICE_API_KEY env var. Adjust the pii-service URL if not running locally."
+  }
+}

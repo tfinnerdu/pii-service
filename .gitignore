@@ -1,0 +1,42 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Environment and secrets
+.env
+*.env.local
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+*.lcov
+
+# IDE
+.idea/
+.vscode/
+*.suo
+*.user
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+.hub-logs/
+
+# Uploaded files (don't cache test files)
+uploads/
+
+# spaCy model (large binary - install via requirements.txt)
+# en_core_web_lg is installed into the venv, not stored in the repo

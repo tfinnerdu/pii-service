@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003" ToolsVersion="4.0">
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <SchemaVersion>2.0</SchemaVersion>
+    <ProjectGuid>{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}</ProjectGuid>
+    <ProjectHome>.</ProjectHome>
+    <StartupFile>app.py</StartupFile>
+    <SearchPath></SearchPath>
+    <WorkingDirectory>.</WorkingDirectory>
+    <OutputPath>.</OutputPath>
+    <ProjectType>Django</ProjectType>
+    <Name>pii-service</Name>
+    <RootNamespace>pii-service</RootNamespace>
+    <InterpreterId>$(MSBuildProjectDirectory)\.venv\Scripts\python.exe</InterpreterId>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
+    <DebugSymbols>true</DebugSymbols>
+    <EnableUnmanagedDebugging>false</EnableUnmanagedDebugging>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
+    <DebugSymbols>false</DebugSymbols>
+    <EnableUnmanagedDebugging>false</EnableUnmanagedDebugging>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="app.py" />
+    <Compile Include="pii_guard\__init__.py" />
+    <Compile Include="pii_guard\models.py" />
+    <Compile Include="pii_guard\guard.py" />
+    <Compile Include="pii_guard\recognizers.py" />
+    <Compile Include="pii_guard\policy.py" />
+    <Compile Include="pii_guard\audit.py" />
+    <Compile Include="pii_guard\auth.py" />
+    <Compile Include="pii_guard\config.py" />
+    <Compile Include="workers\conductor_pii_worker.py" />
+    <Compile Include="tests\conftest.py" />
+    <Compile Include="tests\unit\test_guard.py" />
+    <Compile Include="tests\unit\test_recognizers.py" />
+    <Compile Include="tests\unit\test_policy.py" />
+    <Compile Include="tests\unit\test_audit.py" />
+    <Compile Include="tests\unit\test_auth.py" />
+    <Compile Include="tests\characterization\test_api_contract.py" />
+    <Compile Include="tests\characterization\test_recognizer_patterns.py" />
+    <Compile Include="tests\characterization\test_env_vars.py" />
+    <Compile Include="tests\characterization\test_k8s_manifest.py" />
+    <Compile Include="tests\integration\test_api_endpoints.py" />
+    <Compile Include="examples\usage.py" />
+    <Compile Include="examples\ai_preflight.py" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include=".env.example" />
+    <Content Include=".gitignore" />
+    <Content Include="LICENSE" />
+    <Content Include="Dockerfile" />
+    <Content Include="requirements.txt" />
+    <Content Include="start-local.ps1" />
+    <Content Include="k8s\deployment.yaml" />
+    <Content Include="workflows\pii_scan_and_sanitize.json" />
+    <Content Include="workflows\pii_ai_preflight_gate.json" />
+    <Content Include="n8n\pii_service_workflow.json" />
+    <Content Include="docs\bashCommands.txt" />
+    <Content Include="docs\coverage-accountability.md" />
+    <Content Include="docs\user-guide.md" />
+    <Content Include="TESTING.md" />
+  </ItemGroup>
+  <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />
+</Project>

@@ -1,0 +1,31 @@
+{
+  "name": "pii_scan_and_sanitize",
+  "description": "Scan text for PII, gate on risk level, then sanitize before AI processing.",
+  "version": 1,
+  "inputParameters": ["text", "mode", "policy", "min_safe_risk_level"],
+  "outputParameters": {
+    "pii_found": "${sanitize_ref.output.pii_found}",
+    "risk_level": "${sanitize_ref.output.risk_level}",
+    "sanitized_text": "${sanitize_ref.output.sanitized_text}",
+    "excluded": "${sanitize_ref.output.excluded}",
+    "entity_types": "${sanitize_ref.output.entity_types}"
+  },
+  "tasks": [
+    {
+      "name": "pii_sanitize_text",
+      "taskReferenceName": "sanitize_ref",
+      "type": "SIMPLE",
+      "inputParameters": {
+        "text": "${workflow.input.text}",
+        "mode": "${workflow.input.mode}",
+        "policy": "${workflow.input.policy}",
+        "exclude_entity_types": []
+      }
+    }
+  ],
+  "schemaVersion": 2,
+  "restartable": true,
+  "ownerEmail": "ai-platform@doane.edu",
+  "timeoutPolicy": "TIME_OUT_WF",
+  "timeoutSeconds": 30
+}
