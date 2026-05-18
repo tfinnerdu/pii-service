@@ -94,6 +94,8 @@ def log_event(
     policy_name: Optional[str] = None,
     subject_id: Optional[str] = None,   # CCPA: data subject identifier (hashed by caller)
     destination: Optional[str] = None,  # HIPAA: destination system or caller-context label
+    caller_name: Optional[str] = None,  # named key identifier from API_KEYS (e.g. "n8n-prod")
+    correlation_id: Optional[str] = None,  # caller-supplied opaque ID for record linkage
 ) -> None:
     """
     Emit one structured audit event per request (never one per fan-out item).
@@ -105,6 +107,7 @@ def log_event(
         "request_id": request_id,
         "client_ip": client_ip,
         "api_key_prefix": api_key_prefix,
+        "caller_name": caller_name,
         "mode": mode,
         "action": action,
         "batch_size": batch_size,
@@ -116,6 +119,7 @@ def log_event(
         "policy": policy_name,
         "subject_id": subject_id,
         "destination": destination,
+        "correlation_id": correlation_id,
     }
     logger.info(json.dumps(event))
 

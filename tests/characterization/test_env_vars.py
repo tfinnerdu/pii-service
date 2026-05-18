@@ -32,8 +32,9 @@ EXPECTED_ENV_VARS = {
     # Flask / service
     "PORT",
     "FLASK_ENV",
-    # API key authentication
+    # API key authentication (single key backward-compat + named multi-key)
     "API_KEY",
+    "API_KEYS",
     # Batch / file limits
     "BATCH_SIZE_LIMIT",
     "FILE_ROW_LIMIT",

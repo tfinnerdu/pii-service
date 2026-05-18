@@ -12,10 +12,13 @@ Endpoints:
   GET  /api/v1/policies              - Named policy catalog
   GET  /api/v1/schemas               - Schema profiles (Banner, Colleague, Salesforce, Ethos, n8n)
   GET  /api/v1/stats                 - In-process telemetry (no raw PII)
+  GET  /api/v1/keys                  - List active key names (never values)
+  GET  /api/v1/jobs/<id>             - Async job status stub (501 — Redis/RQ deferred)
   POST /api/v1/stats/reset           - Reset in-memory telemetry counters
-  POST /api/v1/config/reload         - Hot-reload PII_CONFIG_FILE without pod restart
+  POST /api/v1/config/reload         - Hot-reload PII_CONFIG_FILE + API_KEYS without pod restart
   POST /api/v1/scan                  - Detect PII, return hits (no sanitization)
   POST /api/v1/scan/structured       - Scan JSON record field-by-field
+  POST /api/v1/scan/ocr              - PII scan of OCR service page output (confidence-aware)
   POST /api/v1/sanitize              - Detect and sanitize a single text
   POST /api/v1/sanitize/batch        - Sanitize a list of texts
   POST /api/v1/sanitize/structured   - Sanitize specific fields of a JSON record
@@ -24,6 +27,7 @@ Endpoints:
   POST /api/v1/process               - Generic process: raw text/record in, PII-safe out
   POST /api/v1/file                  - Sanitize uploaded CSV, JSON, PDF, DOCX, XLSX, TXT
   POST /api/v1/explain               - Per-hit detection breakdown (pattern, recognizer, score)
+  POST /api/v1/keys/generate         - Generate a secure named API key (shown once)
 """
 
 import base64
@@ -43,7 +47,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from pii_guard import PiiGuard, SanitizeMode, DOANE_RECOGNIZER_REGISTRY
-from pii_guard.auth import init_auth, require_api_key, is_auth_enabled
+from pii_guard.auth import init_auth, require_api_key, is_auth_enabled, list_key_names, generate_key
 from pii_guard import audit
 from pii_guard.policy import BUILT_IN_POLICIES, policy_engine
 from pii_guard.config import get_config, BUILT_IN_SCHEMA_PROFILES
@@ -138,6 +142,7 @@ with app.app_context():
 def attach_request_id() -> None:
     g.request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
     g.api_key_prefix = None
+    g.caller_name = None
     g.request_start = time.time()
 
 
@@ -375,6 +380,7 @@ def config_reload():
     """
     from pii_guard.config import reload_config
     cfg = reload_config()
+    init_auth()
     return jsonify({
         "reloaded": True,
         "entity_thresholds": len(cfg.entity_thresholds),
@@ -413,6 +419,7 @@ def scan():
     exclude_types = body.get("exclude_entity_types", [])
     subject_id = body.get("subject_id")
     destination = body.get("destination")
+    correlation_id = body.get("correlation_id")
 
     if not isinstance(text, str):
         return error_response("'text' must be a string", "INVALID_INPUT", 400)
@@ -421,12 +428,15 @@ def scan():
         return err
 
     if _SANDBOX_MODE:
-        return jsonify({
+        resp = {
             "pii_found": True, "hit_count": 1, "risk_level": "MEDIUM",
             "entity_types": ["PERSON"],
             "hits": [{"entity_type": "PERSON", "start": 0, "end": 4, "score": 0.85, "risk_level": "MEDIUM"}],
             "sandbox": True, "request_id": g.request_id,
-        })
+        }
+        if correlation_id is not None:
+            resp["correlation_id"] = correlation_id
+        return jsonify(resp)
 
     text = _preprocess_text(text)
     guard = get_guard()
@@ -449,9 +459,11 @@ def scan():
         action="scan",
         subject_id=subject_id,
         destination=destination,
+        caller_name=g.caller_name,
+        correlation_id=correlation_id,
     )
 
-    return jsonify({
+    resp = {
         "pii_found": bool(hits),
         "hit_count": len(hits),
         "risk_level": result.risk_level.value,
@@ -467,7 +479,10 @@ def scan():
             for h in hits
         ],
         "request_id": g.request_id,
-    })
+    }
+    if correlation_id is not None:
+        resp["correlation_id"] = correlation_id
+    return jsonify(resp)
 
 
 # ---------------------------------------------------------------------------
@@ -566,6 +581,7 @@ def sanitize():
     exclude_types = body.get("exclude_entity_types", [])
     subject_id = body.get("subject_id")
     destination = body.get("destination")
+    correlation_id = body.get("correlation_id")
 
     if not isinstance(text, str):
         return error_response("'text' must be a string", "INVALID_INPUT", 400)
@@ -578,12 +594,15 @@ def sanitize():
         return err
 
     if _SANDBOX_MODE:
-        return jsonify({
+        resp = {
             "sanitized_text": "[PERSON] placeholder for sandbox mode",
             "excluded": False, "pii_found": True, "risk_level": "MEDIUM",
             "entity_types": ["PERSON"], "hit_count": 1, "mode": mode_str,
             "sandbox": True, "request_id": g.request_id,
-        })
+        }
+        if correlation_id is not None:
+            resp["correlation_id"] = correlation_id
+        return jsonify(resp)
 
     text = _preprocess_text(text)
     guard = get_guard()
@@ -603,14 +622,19 @@ def sanitize():
         action="exclude" if result.excluded else mode.value,
         subject_id=subject_id,
         destination=destination,
+        caller_name=g.caller_name,
+        correlation_id=correlation_id,
     )
 
-    return jsonify({
+    resp = {
         "sanitized_text": result.sanitized_text,
         "excluded": result.excluded,
         **result.summary(),
         "request_id": g.request_id,
-    })
+    }
+    if correlation_id is not None:
+        resp["correlation_id"] = correlation_id
+    return jsonify(resp)
 
 
 # ---------------------------------------------------------------------------
@@ -847,6 +871,7 @@ def preflight():
         action="preflight",
         subject_id=subject_id,
         destination=destination,
+        caller_name=g.caller_name,
     )
 
     return jsonify({
@@ -1537,6 +1562,192 @@ def explain():
         "hits": explained,
         "request_id": g.request_id,
     })
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/keys — list active key names (never exposes key values)
+# ---------------------------------------------------------------------------
+
+@app.route("/api/v1/keys")
+@require_api_key
+def list_keys():
+    names = list_key_names()
+    return jsonify({
+        "keys": names,
+        "count": len(names),
+        "auth_enabled": is_auth_enabled(),
+    })
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/keys/generate — generate a cryptographically secure API key
+# ---------------------------------------------------------------------------
+
+@app.route("/api/v1/keys/generate", methods=["POST"])
+@require_api_key
+def generate_api_key():
+    """
+    Generate a secure API key for a named caller. The key is shown once — it is
+    never stored by pii-service. Add it to API_KEYS env var, then POST /api/v1/config/reload.
+
+    Body: { "name": "n8n-prod", "prefix": "sk_n8n" }
+    """
+    body = request.get_json(silent=True) or {}
+    name = body.get("name", "").strip()
+    prefix = body.get("prefix", "sk").strip()
+
+    if not name:
+        return error_response("'name' is required — a label for audit logs (e.g. 'n8n-prod').", "INVALID_INPUT", 400)
+    if not re.match(r'^[a-zA-Z0-9_-]+$', name):
+        return error_response(
+            "'name' must contain only letters, digits, hyphens, and underscores.",
+            "INVALID_INPUT", 400,
+        )
+
+    key = generate_key(prefix=prefix)
+    add_to = f"{name}:{key}"
+    return jsonify({
+        "name": name,
+        "key": key,
+        "add_to_api_keys": add_to,
+        "instructions": (
+            f"Add '{add_to}' to your API_KEYS env var (comma-separated), "
+            "then POST /api/v1/config/reload to activate without restart. "
+            "This key is shown once — store it securely."
+        ),
+    })
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/scan/ocr — PII scan of OCR service output (per-page, with confidence)
+# ---------------------------------------------------------------------------
+
+@app.route("/api/v1/scan/ocr", methods=["POST"])
+@require_api_key
+def scan_ocr():
+    """
+    Accept OCR service output (pages with extracted text + confidence scores) and
+    scan each page for PII. Designed to be called by the OCR service after text
+    extraction from scanned PDFs, images, or faxes.
+
+    Body:
+      {
+        "pages": [{ "page_number": 1, "text": "...", "confidence": 94.1 }],
+        "mode": "mask",
+        "low_confidence_threshold": 70.0,
+        "exclude_entity_types": [],
+        "correlation_id": "banner-pidm-123456"
+      }
+
+    Pages with confidence below low_confidence_threshold get low_confidence_warning=true,
+    flagging that OCR errors may have caused PII to be missed or misread.
+    """
+    body = request.get_json(silent=True) or {}
+    pages = body.get("pages")
+    mode_str = body.get("mode", "mask")
+    low_conf_threshold = float(body.get("low_confidence_threshold", 70.0))
+    exclude_types = body.get("exclude_entity_types", [])
+    correlation_id = body.get("correlation_id")
+
+    if not isinstance(pages, list) or not pages:
+        return error_response(
+            "'pages' must be a non-empty array of {page_number, text, confidence} objects.",
+            "INVALID_INPUT", 400,
+        )
+
+    mode, err = _parse_mode(mode_str)
+    if err:
+        return err
+
+    guard = get_guard()
+    page_results = []
+    pages_with_pii = 0
+    _risk_order = ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+    highest_risk = "LOW"
+
+    for page in pages:
+        if not isinstance(page, dict):
+            continue
+        page_num = page.get("page_number", 0)
+        text = page.get("text", "")
+        confidence = float(page.get("confidence", 100.0))
+        low_confidence_warning = confidence < low_conf_threshold
+
+        if not isinstance(text, str) or not text.strip():
+            page_results.append({
+                "page_number": page_num,
+                "ocr_confidence": confidence,
+                "low_confidence_warning": low_confidence_warning,
+                "sanitized_text": "",
+                "pii_found": False,
+                "hit_count": 0,
+                "entity_types": [],
+                "risk_level": "LOW",
+            })
+            continue
+
+        result = guard.sanitize(text, mode=mode, exclude_entity_types=exclude_types or None)
+        if not result.is_clean:
+            pages_with_pii += 1
+        risk = result.risk_level.value
+        if _risk_order.index(risk) > _risk_order.index(highest_risk):
+            highest_risk = risk
+
+        page_results.append({
+            "page_number": page_num,
+            "ocr_confidence": confidence,
+            "low_confidence_warning": low_confidence_warning,
+            "sanitized_text": result.sanitized_text,
+            "pii_found": not result.is_clean,
+            "hit_count": len(result.hits),
+            "entity_types": result.entity_types,
+            "risk_level": risk,
+        })
+
+    all_entity_types = list({et for p in page_results for et in p.get("entity_types", [])})
+    audit.log_event(
+        endpoint="/api/v1/scan/ocr",
+        request_id=g.request_id,
+        client_ip=request.remote_addr,
+        api_key_prefix=g.api_key_prefix,
+        mode=mode.value,
+        hit_count=sum(p["hit_count"] for p in page_results),
+        excluded_count=0,
+        entity_types=all_entity_types,
+        risk_level=highest_risk,
+        batch_size=len(page_results),
+        duration_ms=_duration_ms(),
+        action="scan_ocr",
+        caller_name=g.caller_name,
+        correlation_id=correlation_id,
+    )
+
+    resp = {
+        "page_count": len(page_results),
+        "pages_with_pii": pages_with_pii,
+        "highest_risk": highest_risk,
+        "pages": page_results,
+        "request_id": g.request_id,
+    }
+    if correlation_id is not None:
+        resp["correlation_id"] = correlation_id
+    return jsonify(resp)
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/jobs/<job_id> — async job status stub (Redis/RQ deferred)
+# ---------------------------------------------------------------------------
+
+@app.route("/api/v1/jobs/<job_id>")
+@require_api_key
+def job_status(job_id):
+    return jsonify({
+        "error": "Async job queue not yet implemented. Use synchronous endpoints for now.",
+        "code": "NOT_IMPLEMENTED",
+        "job_id": job_id,
+        "pending_item": "Redis/RQ queue — deferred until file workloads hit timeout ceiling.",
+        "request_id": g.request_id,
+    }), 501
 
 
 def _process_csv(guard, content: bytes, columns: list, mode, exclude_types, include_excluded, max_rows) -> tuple:

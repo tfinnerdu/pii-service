@@ -17,9 +17,9 @@ No file ships without a bucket.
 | `pii_guard/guard.py` | Unit-tested + Contract-pinned | `tests/unit/test_guard.py` (requires presidio), `tests/characterization/test_recognizer_patterns.py` (HMAC seed, new pseudo format fidelity) |
 | `pii_guard/recognizers.py` | Unit-tested + Contract-pinned | `tests/unit/test_recognizers.py` (requires presidio), `tests/characterization/test_recognizer_patterns.py` (all custom entities including TITLE_IX_CASE_ID, IRB_PROTOCOL, FINANCIAL_AID_AWARD, STUDENT_ACCOUNT_ID, LICENSE_PLATE; `get_context_for_entity()`) |
 | `pii_guard/policy.py` | Unit-tested + Contract-pinned | `tests/unit/test_policy.py`, `tests/characterization/test_api_contract.py` (policy catalog shape) |
-| `pii_guard/audit.py` | Unit-tested | `tests/unit/test_audit.py` (log_event, get_stats, reset_stats; subject_id and destination fields) |
-| `pii_guard/auth.py` | Unit-tested + Contract-pinned | `tests/unit/test_auth.py` (including edge cases: empty key, header precedence), `tests/characterization/test_api_contract.py` |
-| `pii_guard/config.py` | Contract-pinned | `tests/characterization/test_env_vars.py` (all env var names including PSEUDO_SECRET, PII_SANDBOX_MODE, PII_DECODE_ENCODED), `tests/characterization/test_api_contract.py` (schemas endpoint, 12 profiles, config/reload endpoint) |
+| `pii_guard/audit.py` | Unit-tested | `tests/unit/test_audit.py` (log_event, get_stats, reset_stats; subject_id, destination, caller_name, correlation_id fields) |
+| `pii_guard/auth.py` | Unit-tested + Contract-pinned | `tests/unit/test_auth.py` (single key backward-compat, named multi-key API_KEYS, get_caller_name timing-safe, list_key_names, generate_key, header precedence, edge cases), `tests/characterization/test_api_contract.py` |
+| `pii_guard/config.py` | Contract-pinned | `tests/characterization/test_env_vars.py` (all env var names including API_KEYS, PSEUDO_SECRET, PII_SANDBOX_MODE, PII_DECODE_ENCODED), `tests/characterization/test_api_contract.py` (schemas endpoint, 12 profiles, config/reload endpoint) |
 | `workers/conductor_pii_worker.py` | Contract-pinned | `tests/characterization/test_conductor_contracts.py` (task names, TASK_HANDLERS dict, input param names) |
 | `k8s/deployment.yaml` | Contract-pinned | `tests/characterization/test_k8s_manifest.py` (namespace, port, TLS, middleware, imagePullSecret; readiness probe path /health/deep) |
 | `workflows/pii_scan_and_sanitize.json` | Contract-pinned | `tests/characterization/test_conductor_contracts.py` (required fields, task reference name, task order) |
