@@ -25,6 +25,7 @@ No file ships without a bucket.
 | `k8s/deployment.yaml` | Contract-pinned | `tests/characterization/test_k8s_manifest.py` (namespace, port, TLS, middleware, imagePullSecret; readiness probe path /health/deep) |
 | `workflows/pii_scan_and_sanitize.json` | Contract-pinned | `tests/characterization/test_conductor_contracts.py` (required fields, task reference name, task order) |
 | `workflows/pii_ai_preflight_gate.json` | Contract-pinned | `tests/characterization/test_conductor_contracts.py` (required fields, preflight-before-sanitize order, JQ transform task) |
+| `templates/ui.html` | Contract-pinned + Manual-procedure | `tests/characterization/test_api_contract.py` (TestUiContract: 200 when auth disabled, HTML present, all tabs); full demo walkthrough in TESTING.md §10 |
 | `openapi.yaml` | Manual-procedure | Review during any endpoint addition, removal, or schema change |
 | `n8n/pii_service_workflow.json` | Manual-procedure | TESTING.md §4 |
 | `examples/usage.py` | Manual-procedure | TESTING.md §5.1 |

@@ -786,6 +786,30 @@ class TestOcrScanContract:
 # Async jobs stub contract — pinned 2025-05
 # ---------------------------------------------------------------------------
 
+class TestUiContract:
+    """
+    Known-good: GET /ui returns 200 HTML when auth is disabled (API_KEY unset).
+    Returns 403 when auth is active and UI_ENABLED is not explicitly true.
+    """
+
+    def test_ui_returns_200_when_auth_disabled(self, client):
+        resp = client.get("/ui")
+        assert resp.status_code == 200, (
+            "GET /ui must return 200 when API_KEY is unset (local dev mode). "
+            "If this fails, check UI_ENABLED env var or auth state."
+        )
+
+    def test_ui_returns_html(self, client):
+        resp = client.get("/ui")
+        assert b"pii-service" in resp.data
+        assert b"<html" in resp.data.lower()
+
+    def test_ui_contains_all_tab_names(self, client):
+        resp = client.get("/ui")
+        for tab in (b"Scan", b"Explain", b"Policy", b"File Upload", b"Record"):
+            assert tab in resp.data, f"UI missing tab: {tab}"
+
+
 class TestJobsStubContract:
     """
     Known-good: GET /api/v1/jobs/<id> returns 501 NOT_IMPLEMENTED.

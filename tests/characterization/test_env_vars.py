@@ -32,6 +32,7 @@ EXPECTED_ENV_VARS = {
     # Flask / service
     "PORT",
     "FLASK_ENV",
+    "UI_ENABLED",
     # API key authentication (single key backward-compat + named multi-key)
     "API_KEY",
     "API_KEYS",

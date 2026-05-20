@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>pii-service — Dev Console</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #222537;
+      --border: #2d3149;
+      --text: #e2e8f0;
+      --muted: #8892a4;
+      --accent: #6366f1;
+      --accent-hover: #818cf8;
+      --low: #16a34a; --low-bg: #052e16;
+      --medium: #d97706; --medium-bg: #1c1200;
+      --high: #dc2626; --high-bg: #1f0a0a;
+      --critical: #9333ea; --critical-bg: #1a0d2e;
+      --hl-low: rgba(22,163,74,0.25);
+      --hl-medium: rgba(217,119,6,0.30);
+      --hl-high: rgba(220,38,38,0.30);
+      --hl-critical: rgba(147,51,234,0.35);
+    }
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+
+    /* ── Header ── */
+    header{display:flex;align-items:center;justify-content:space-between;padding:10px 24px;background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:10}
+    .logo{font-weight:700;font-size:1rem;color:var(--accent)}
+    .logo small{color:var(--muted);font-weight:400;font-size:0.8rem;margin-left:6px}
+    .health{display:flex;align-items:center;gap:6px;font-size:0.78rem;color:var(--muted)}
+    .hdot{width:8px;height:8px;border-radius:50%;background:#555;flex-shrink:0}
+    .hdot.ok{background:var(--low)} .hdot.deg{background:var(--medium)} .hdot.fail{background:var(--high)}
+
+    /* ── Tab nav ── */
+    nav{display:flex;padding:0 24px;background:var(--surface);border-bottom:1px solid var(--border);overflow-x:auto;gap:2px}
+    .tab{padding:10px 16px;background:transparent;border:none;border-bottom:2px solid transparent;color:var(--muted);font-size:0.85rem;cursor:pointer;white-space:nowrap;transition:.15s}
+    .tab:hover{color:var(--text)}
+    .tab.on{color:var(--accent);border-bottom-color:var(--accent)}
+
+    /* ── Layout ── */
+    .wrap{max-width:1200px;margin:0 auto;padding:20px}
+    .pane{display:none}.pane.on{display:block}
+    .cols{display:grid;grid-template-columns:320px 1fr;gap:16px;align-items:start}
+    .cols2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+    @media(max-width:800px){.cols,.cols2{grid-template-columns:1fr}}
+
+    /* ── Card ── */
+    .card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px}
+    .card-title{font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:12px}
+
+    /* ── Form ── */
+    label{display:block;font-size:.78rem;color:var(--muted);margin-bottom:3px}
+    textarea,select,input[type=text]{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:7px 11px;font-size:.85rem;font-family:inherit;transition:border-color .15s}
+    textarea:focus,select:focus,input:focus{outline:none;border-color:var(--accent)}
+    textarea{resize:vertical;min-height:110px}
+    select{cursor:pointer}
+    .fg{margin-bottom:11px}
+    .fr{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:11px}
+
+    /* ── Buttons ── */
+    .btn{display:inline-flex;align-items:center;gap:5px;padding:7px 14px;border:none;border-radius:6px;font-size:.85rem;font-weight:500;cursor:pointer;transition:.15s}
+    .btn-p{background:var(--accent);color:#fff}.btn-p:hover{background:var(--accent-hover)}.btn-p:disabled{opacity:.5;cursor:not-allowed}
+    .btn-g{background:transparent;border:1px solid var(--border);color:var(--muted)}.btn-g:hover{color:var(--text)}
+
+    /* ── Risk badges ── */
+    .rb{display:inline-flex;align-items:center;padding:2px 8px;border-radius:12px;font-size:.7rem;font-weight:700}
+    .rLOW{background:var(--low-bg);color:var(--low)}
+    .rMEDIUM{background:var(--medium-bg);color:var(--medium)}
+    .rHIGH{background:var(--high-bg);color:var(--high)}
+    .rCRITICAL{background:var(--critical-bg);color:var(--critical)}
+
+    /* ── Entity tags ── */
+    .et{display:inline-block;padding:1px 6px;border-radius:4px;font-size:.68rem;font-weight:700;background:rgba(99,102,241,.15);color:var(--accent-hover);margin:1px}
+
+    /* ── Highlighted text ── */
+    .htext{font-size:.875rem;line-height:1.75;word-break:break-word;white-space:pre-wrap}
+    mark{border-radius:3px;padding:0 2px;color:inherit}
+    mark.rLOW{background:var(--hl-low)}
+    mark.rMEDIUM{background:var(--hl-medium)}
+    mark.rHIGH{background:var(--hl-high)}
+    mark.rCRITICAL{background:var(--hl-critical)}
+
+    /* ── Table ── */
+    table{width:100%;border-collapse:collapse;font-size:.78rem}
+    th{text-align:left;padding:5px 8px;color:var(--muted);border-bottom:1px solid var(--border);font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em}
+    td{padding:7px 8px;border-bottom:1px solid var(--border);vertical-align:top}
+    tr:last-child td{border-bottom:none}
+    tr:hover td{background:var(--surface2)}
+
+    /* ── Code ── */
+    .code{font-family:'SF Mono','Fira Code',monospace;font-size:.78rem;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:11px;white-space:pre-wrap;word-break:break-all;max-height:360px;overflow-y:auto;line-height:1.6}
+
+    /* ── Stats bar ── */
+    .sbar{display:flex;gap:16px;flex-wrap:wrap;padding:9px 13px;background:var(--bg);border:1px solid var(--border);border-radius:6px;margin-bottom:12px;font-size:.78rem}
+    .si{display:flex;align-items:center;gap:4px}
+    .sl{color:var(--muted)}
+
+    /* ── States ── */
+    .empty{text-align:center;padding:32px;color:var(--muted);font-size:.85rem}
+    .err{background:var(--high-bg);color:var(--high);border:1px solid rgba(220,38,38,.3);border-radius:6px;padding:9px 13px;font-size:.85rem;margin-top:8px}
+
+    /* ── Spinner ── */
+    .spin{width:14px;height:14px;border:2px solid rgba(255,255,255,.2);border-top-color:#fff;border-radius:50%;animation:sp .7s linear infinite;display:inline-block}
+    @keyframes sp{to{transform:rotate(360deg)}}
+
+    /* ── File drop ── */
+    .drop{border:2px dashed var(--border);border-radius:8px;padding:28px;text-align:center;cursor:pointer;transition:.15s;color:var(--muted);font-size:.85rem}
+    .drop:hover,.drop.over{border-color:var(--accent);color:var(--text);background:rgba(99,102,241,.05)}
+    .drop input[type=file]{display:none}
+
+    hr{border:none;border-top:1px solid var(--border);margin:12px 0}
+    .mono{font-family:'SF Mono','Fira Code',monospace;font-size:.75rem}
+  </style>
+</head>
+<body>
+
+<header>
+  <div><span class="logo">pii-service <small>dev console</small></span></div>
+  <div class="health"><div class="hdot" id="hdot"></div><span id="htxt">checking…</span></div>
+</header>
+
+<nav>
+  <button class="tab on" data-tab="scan">Scan &amp; Sanitize</button>
+  <button class="tab" data-tab="explain">Explain</button>
+  <button class="tab" data-tab="policy">Policy</button>
+  <button class="tab" data-tab="file">File Upload</button>
+  <button class="tab" data-tab="record">Record / Schema</button>
+</nav>
+
+<div class="wrap">
+
+<!-- ══════════════════════════════════════════════════════════
+     SCAN & SANITIZE
+══════════════════════════════════════════════════════════ -->
+<div class="pane on" id="tab-scan">
+  <div class="cols">
+    <div class="card">
+      <div class="card-title">Input</div>
+      <div class="fg">
+        <label>Text to scan</label>
+        <textarea id="s-text" rows="9" placeholder="Paste text here…&#10;&#10;e.g. Student D1234567, SSN 123-45-6789, jsmith@doane.edu"></textarea>
+      </div>
+      <div class="fr">
+        <div><label>Mode</label>
+          <select id="s-mode">
+            <option value="mask">mask</option>
+            <option value="pseudonymize">pseudonymize</option>
+            <option value="redact">redact</option>
+            <option value="exclude">exclude</option>
+          </select>
+        </div>
+        <div><label>Policy (optional)</label>
+          <select id="s-policy"><option value="">— none —</option></select>
+        </div>
+      </div>
+      <div class="fg">
+        <label>Correlation ID (optional)</label>
+        <input type="text" id="s-corr" placeholder="e.g. banner-pidm-1234567">
+      </div>
+      <button class="btn btn-p" id="scan-btn" onclick="doScan()">Scan &amp; Sanitize</button>
+    </div>
+    <div id="scan-out"><div class="empty">Results appear here</div></div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     EXPLAIN
+══════════════════════════════════════════════════════════ -->
+<div class="pane" id="tab-explain">
+  <div class="cols">
+    <div class="card">
+      <div class="card-title">Input</div>
+      <div class="fg">
+        <label>Text to explain</label>
+        <textarea id="e-text" rows="9" placeholder="Paste text to get per-hit detection breakdown…"></textarea>
+      </div>
+      <button class="btn btn-p" id="explain-btn" onclick="doExplain()">Explain Detections</button>
+    </div>
+    <div id="explain-out"><div class="empty">Per-hit breakdown appears here</div></div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     POLICY
+══════════════════════════════════════════════════════════ -->
+<div class="pane" id="tab-policy">
+  <div class="cols">
+    <div class="card">
+      <div class="card-title">Input</div>
+      <div class="fg">
+        <label>Text</label>
+        <textarea id="p-text" rows="9" placeholder="Paste text to apply a named policy…"></textarea>
+      </div>
+      <div class="fg">
+        <label>Policy</label>
+        <select id="p-policy"><option value="">Loading…</option></select>
+      </div>
+      <button class="btn btn-p" id="policy-btn" onclick="doPolicy()">Apply Policy</button>
+    </div>
+    <div id="policy-out"><div class="empty">Policy results appear here</div></div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     FILE UPLOAD
+══════════════════════════════════════════════════════════ -->
+<div class="pane" id="tab-file">
+  <div class="cols">
+    <div class="card">
+      <div class="card-title">Upload</div>
+      <div class="drop" id="drop" onclick="document.getElementById('finput').click()">
+        <input type="file" id="finput" accept=".csv,.tsv,.json,.jsonl,.txt,.pdf,.docx,.xlsx" onchange="pickFile(this)">
+        <div id="drop-lbl">Click or drag a file<br><small style="color:var(--muted)">CSV · TSV · JSON · JSONL · TXT · PDF · DOCX · XLSX</small></div>
+      </div>
+      <div class="fr" style="margin-top:12px">
+        <div><label>Mode</label>
+          <select id="f-mode">
+            <option value="mask">mask</option>
+            <option value="pseudonymize">pseudonymize</option>
+            <option value="redact">redact</option>
+          </select>
+        </div>
+        <div><label>Columns (optional, comma-sep)</label>
+          <input type="text" id="f-cols" placeholder="e.g. name,ssn,email">
+        </div>
+      </div>
+      <button class="btn btn-p" id="file-btn" onclick="doFile()" disabled>Process File</button>
+    </div>
+    <div id="file-out"><div class="empty">File results appear here</div></div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     RECORD / SCHEMA
+══════════════════════════════════════════════════════════ -->
+<div class="pane" id="tab-record">
+  <div class="cols">
+    <div class="card">
+      <div class="card-title">Record Input</div>
+      <div class="fg">
+        <label>JSON record</label>
+        <textarea id="r-json" rows="11" placeholder='{"SPRIDEN_LAST_NAME":"Smith","SPBPERS_SSN":"123-45-6789","GPA":3.5}'></textarea>
+      </div>
+      <div class="fr">
+        <div><label>Schema profile</label>
+          <select id="r-schema"><option value="">— none —</option></select>
+        </div>
+        <div><label>Mode</label>
+          <select id="r-mode">
+            <option value="mask">mask</option>
+            <option value="pseudonymize">pseudonymize</option>
+            <option value="redact">redact</option>
+            <option value="exclude">exclude</option>
+          </select>
+        </div>
+      </div>
+      <button class="btn btn-p" id="record-btn" onclick="doRecord()">Process Record</button>
+    </div>
+    <div id="record-out"><div class="empty">Sanitized record appears here</div></div>
+  </div>
+</div>
+
+</div><!-- .wrap -->
+
+<script>
+// ── Tab nav ──────────────────────────────────────────────────
+document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
+  const id = t.dataset.tab;
+  document.querySelectorAll('.tab').forEach(x => x.classList.remove('on'));
+  document.querySelectorAll('.pane').forEach(x => x.classList.remove('on'));
+  t.classList.add('on');
+  document.getElementById('tab-' + id).classList.add('on');
+}));
+
+// ── Utilities ────────────────────────────────────────────────
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const rc = r => 'r' + (r||'LOW');
+const badge = r => `<span class="rb ${rc(r)}">${r||'LOW'}</span>`;
+const tags = arr => (arr||[]).map(t=>`<span class="et">${esc(t)}</span>`).join(' ');
+
+const api = (url, opts={}) => fetch(url, {
+  headers:{'Content-Type':'application/json',...(opts.headers||{})},
+  ...opts
+});
+
+function out(id, html) { document.getElementById(id).innerHTML = html; }
+function err(id, msg)  { out(id, `<div class="err">${esc(msg)}</div>`); }
+
+function busy(id, yes, label) {
+  const b = document.getElementById(id);
+  b.disabled = yes;
+  b.innerHTML = yes ? '<span class="spin"></span> Working…' : label;
+}
+
+// ── Hit highlighting ─────────────────────────────────────────
+function highlight(text, hits) {
+  if (!hits?.length) return esc(text);
+  const sorted = [...hits].sort((a,b) => a.start - b.start);
+  let html = '', pos = 0;
+  for (const h of sorted) {
+    if (h.start < pos) continue;
+    html += esc(text.slice(pos, h.start));
+    html += `<mark class="${rc(h.risk_level)}" title="${esc(h.entity_type)} · score ${h.score}">${esc(text.slice(h.start,h.end))}<sup style="font-size:.6em;opacity:.75"> ${esc(h.entity_type)}</sup></mark>`;
+    pos = h.end;
+  }
+  return html + esc(text.slice(pos));
+}
+
+// ── Stats bar ────────────────────────────────────────────────
+const sbar = items => `<div class="sbar">${items.map(([l,v])=>`<div class="si"><span class="sl">${l}</span> ${v}</div>`).join('')}</div>`;
+
+// ── Health ───────────────────────────────────────────────────
+async function health() {
+  try {
+    const d = await (await fetch('/health/deep')).json();
+    const cl = d.status==='ok' ? 'ok' : d.status==='degraded' ? 'deg' : 'fail';
+    const tx = d.status==='ok' ? 'Presidio ready' : d.status==='degraded' ? 'degraded (fallback spaCy)' : 'Presidio failed';
+    document.getElementById('hdot').className = 'hdot ' + cl;
+    document.getElementById('htxt').textContent = tx;
+  } catch {
+    document.getElementById('hdot').className = 'hdot fail';
+    document.getElementById('htxt').textContent = 'unreachable';
+  }
+}
+
+// ── Load catalogs ────────────────────────────────────────────
+async function catalogs() {
+  try {
+    const [pr, sr] = await Promise.all([fetch('/api/v1/policies'), fetch('/api/v1/schemas')]);
+    const pol = await pr.json();
+    const sch = await sr.json();
+
+    for (const sel of ['s-policy','p-policy']) {
+      const el = document.getElementById(sel);
+      for (const p of pol.policies||[]) {
+        const o = new Option(`${p.name} — ${p.description||''}`, p.name);
+        el.add(o);
+      }
+    }
+    // default policy selector to first real policy
+    const pp = document.getElementById('p-policy');
+    if (pp.options.length > 1) pp.selectedIndex = 1;
+
+    const rs = document.getElementById('r-schema');
+    for (const s of sch.schemas||[]) {
+      rs.add(new Option(`${s.name}  (${s.field_count} fields, ${s.default_mode})`, s.name));
+    }
+  } catch(e) { console.warn('catalogs', e); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SCAN & SANITIZE
+// ═══════════════════════════════════════════════════════════════
+async function doScan() {
+  const text = document.getElementById('s-text').value.trim();
+  if (!text) return;
+  const mode   = document.getElementById('s-mode').value;
+  const policy = document.getElementById('s-policy').value;
+  const corrId = document.getElementById('s-corr').value.trim();
+
+  busy('scan-btn', true);
+  try {
+    const body = {text, mode};
+    if (policy)  body.policy = policy;
+    if (corrId)  body.correlation_id = corrId;
+
+    const [scanR, sanR] = await Promise.all([
+      api('/api/v1/scan',   {method:'POST', body:JSON.stringify({text})}),
+      api(policy ? '/api/v1/policy/apply' : '/api/v1/sanitize',
+          {method:'POST', body:JSON.stringify(body)}),
+    ]);
+    const scan = await scanR.json();
+    const san  = await sanR.json();
+    if (scan.error) { err('scan-out', scan.error); return; }
+
+    const hits = scan.hits || [];
+    const rl   = scan.risk_level || 'LOW';
+    const stxt = san.sanitized_text ?? null;
+
+    const statItems = [
+      ['Risk:', badge(rl)],
+      ['Hits:', `<strong>${hits.length}</strong>`],
+      ['Mode:', `<span class="mono">${mode}</span>`],
+    ];
+    if (corrId) statItems.push(['Corr ID:', `<span class="mono">${esc(san.correlation_id||corrId)}</span>`]);
+    if (san.sandbox) statItems.push(['', `<span class="rb rMEDIUM">sandbox</span>`]);
+
+    out('scan-out', `
+      ${sbar(statItems)}
+      <div class="cols2">
+        <div class="card">
+          <div class="card-title">Original — ${hits.length} hit${hits.length!==1?'s':''}</div>
+          <div class="htext">${highlight(text, hits)}</div>
+          ${hits.length ? `<hr>${tags([...new Set(hits.map(h=>h.entity_type))])}` : ''}
+        </div>
+        <div class="card">
+          <div class="card-title">Sanitized</div>
+          ${san.excluded
+            ? `<span class="rb rCRITICAL">EXCLUDED — chunk dropped</span>`
+            : `<div class="htext">${esc(stxt ?? text)}</div>`}
+        </div>
+      </div>
+      ${hits.length ? `
+      <div class="card" style="margin-top:14px">
+        <div class="card-title">Hit details</div>
+        <table>
+          <thead><tr><th>Entity Type</th><th>Chars</th><th>Risk</th><th>Score</th></tr></thead>
+          <tbody>${hits.map(h=>`<tr>
+            <td><span class="et">${esc(h.entity_type)}</span></td>
+            <td class="mono">${h.start}–${h.end}</td>
+            <td>${badge(h.risk_level)}</td>
+            <td>${h.score}</td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </div>` : ''}
+    `);
+  } catch(e) { err('scan-out', 'Request failed: ' + e.message); }
+  finally    { busy('scan-btn', false, 'Scan &amp; Sanitize'); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// EXPLAIN
+// ═══════════════════════════════════════════════════════════════
+async function doExplain() {
+  const text = document.getElementById('e-text').value.trim();
+  if (!text) return;
+  busy('explain-btn', true);
+  try {
+    const d = await (await api('/api/v1/explain', {method:'POST', body:JSON.stringify({text})})).json();
+    if (d.error) { err('explain-out', d.error); return; }
+    const hits = d.hits || [];
+    out('explain-out', `
+      ${sbar([['Hits:', `<strong>${d.hit_count}</strong>`], ['Text length:', `${d.text_length} chars`]])}
+      <div class="card" style="margin-bottom:14px">
+        <div class="card-title">Highlighted text</div>
+        <div class="htext">${highlight(text, hits)}</div>
+      </div>
+      ${!hits.length ? '<div class="empty">No PII detected</div>' : `
+      <div class="card">
+        <div class="card-title">Detection breakdown</div>
+        <table>
+          <thead><tr><th>Entity Type</th><th>Risk</th><th>Score</th><th>Recognizer</th><th>Pattern</th><th>Context Words</th></tr></thead>
+          <tbody>${hits.map(h=>`<tr>
+            <td><span class="et">${esc(h.entity_type)}</span></td>
+            <td>${badge(h.risk_level)}</td>
+            <td>${h.score}</td>
+            <td class="mono" style="font-size:.72rem">${esc(h.recognizer||'—')}</td>
+            <td class="mono" style="font-size:.68rem;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(h.pattern||'')}">${esc(h.pattern||'—')}</td>
+            <td style="font-size:.72rem;color:var(--muted)">${(h.context_words||[]).slice(0,6).join(', ')||'—'}</td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </div>`}
+    `);
+  } catch(e) { err('explain-out', 'Request failed: ' + e.message); }
+  finally    { busy('explain-btn', false, 'Explain Detections'); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// POLICY
+// ═══════════════════════════════════════════════════════════════
+async function doPolicy() {
+  const text   = document.getElementById('p-text').value.trim();
+  const policy = document.getElementById('p-policy').value;
+  if (!text || !policy) return;
+  busy('policy-btn', true);
+  try {
+    const d = await (await api('/api/v1/policy/apply', {method:'POST', body:JSON.stringify({text, policy})})).json();
+    if (d.error) { err('policy-out', d.error); return; }
+    out('policy-out', `
+      ${sbar([
+        ['Policy:', `<span class="mono">${esc(policy)}</span>`],
+        ['Risk:', badge(d.risk_level)],
+        ['Action:', `<span class="mono">${esc(d.action_taken||'—')}</span>`],
+        ['Passed:', d.passed ? '✓ yes' : '✗ no'],
+      ])}
+      ${(d.blocked_entities||[]).length ? `
+        <div class="card" style="margin-bottom:12px">
+          <div class="card-title">Blocked entities</div>
+          ${tags(d.blocked_entities)}
+        </div>` : ''}
+      <div class="card">
+        <div class="card-title">Output</div>
+        ${d.sanitized_text===null
+          ? `<span class="rb rCRITICAL">EXCLUDED — dropped by policy</span>`
+          : `<div class="htext">${esc(d.sanitized_text)}</div>`}
+      </div>
+    `);
+  } catch(e) { err('policy-out', 'Request failed: ' + e.message); }
+  finally    { busy('policy-btn', false, 'Apply Policy'); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FILE UPLOAD
+// ═══════════════════════════════════════════════════════════════
+let selFile = null;
+
+function pickFile(inp) {
+  selFile = inp.files[0];
+  if (selFile) {
+    document.getElementById('drop-lbl').innerHTML =
+      `<strong>${esc(selFile.name)}</strong><br><small>${(selFile.size/1024).toFixed(1)} KB</small>`;
+    document.getElementById('file-btn').disabled = false;
+  }
+}
+
+const drop = document.getElementById('drop');
+drop.addEventListener('dragover',  e => { e.preventDefault(); drop.classList.add('over'); });
+drop.addEventListener('dragleave', ()  => drop.classList.remove('over'));
+drop.addEventListener('drop', e => {
+  e.preventDefault(); drop.classList.remove('over');
+  const f = e.dataTransfer.files[0];
+  if (f) {
+    selFile = f;
+    document.getElementById('drop-lbl').innerHTML =
+      `<strong>${esc(f.name)}</strong><br><small>${(f.size/1024).toFixed(1)} KB</small>`;
+    document.getElementById('file-btn').disabled = false;
+  }
+});
+
+async function doFile() {
+  if (!selFile) return;
+  const mode = document.getElementById('f-mode').value;
+  const colsRaw = document.getElementById('f-cols').value.trim();
+  busy('file-btn', true);
+  try {
+    const form = new FormData();
+    form.append('file', selFile);
+    form.append('mode', mode);
+    if (colsRaw) form.append('columns', JSON.stringify(colsRaw.split(',').map(c=>c.trim())));
+    const d = await (await fetch('/api/v1/file', {method:'POST', body:form})).json();
+    if (d.error) { err('file-out', d.error); return; }
+    const rows = d.results || [];
+    out('file-out', `
+      ${sbar([
+        ['Type:', `<span class="mono">${d.file_type}</span>`],
+        ['Total rows:', `<strong>${d.total_rows}</strong>`],
+        ['With PII:', `<strong style="color:var(--high)">${d.rows_with_pii}</strong>`],
+        ['Excluded:', `<strong>${d.excluded_rows}</strong>`],
+      ])}
+      <div class="card">
+        <div class="card-title">Results (first ${Math.min(rows.length,50)} of ${d.total_rows})</div>
+        ${!rows.length ? '<div class="empty">No rows</div>' : `
+        <div style="overflow-x:auto">
+          <table>
+            <thead><tr><th>#</th><th>PII?</th><th>Content</th></tr></thead>
+            <tbody>${rows.slice(0,50).map(r=>`<tr>
+              <td style="color:var(--muted)">${r.index}</td>
+              <td>${r.has_pii ? badge('HIGH') : badge('LOW')}</td>
+              <td><div class="code" style="max-height:70px">${esc(JSON.stringify(r.row||r.record||r.sanitized_text,null,2))}</div></td>
+            </tr>`).join('')}</tbody>
+          </table>
+        </div>`}
+      </div>
+    `);
+  } catch(e) { err('file-out', 'Request failed: ' + e.message); }
+  finally    { busy('file-btn', false, 'Process File'); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// RECORD / SCHEMA
+// ═══════════════════════════════════════════════════════════════
+async function doRecord() {
+  const raw = document.getElementById('r-json').value.trim();
+  let record;
+  try { record = JSON.parse(raw); }
+  catch { err('record-out', 'Invalid JSON — check record syntax.'); return; }
+
+  const schema = document.getElementById('r-schema').value;
+  const mode   = document.getElementById('r-mode').value;
+  busy('record-btn', true);
+  try {
+    const body = {record, mode};
+    if (schema) body.schema = schema;
+    const d = await (await api('/api/v1/process', {method:'POST', body:JSON.stringify(body)})).json();
+    if (d.error) { err('record-out', d.error); return; }
+    const san = d.sanitized_record || {};
+    const changed = Object.keys(san).filter(k => JSON.stringify(san[k]) !== JSON.stringify(record[k]));
+
+    const renderDiff = (obj, other, highlight) => {
+      const lines = [];
+      for (const [k, v] of Object.entries(obj)) {
+        const diff = JSON.stringify(v) !== JSON.stringify(other[k]);
+        const ks = esc(JSON.stringify(k));
+        const vs = esc(JSON.stringify(v));
+        if (diff && highlight)
+          lines.push(`  <span style="color:var(--medium)">${ks}</span>: <span style="color:var(--high);font-weight:600">${vs}</span>`);
+        else if (diff)
+          lines.push(`  <span style="color:var(--medium)">${ks}</span>: <span style="opacity:.55">${vs}</span>`);
+        else
+          lines.push(`  ${ks}: ${vs}`);
+      }
+      return '{\n' + lines.join(',\n') + '\n}';
+    };
+
+    out('record-out', `
+      ${sbar([
+        ['Schema:', `<span class="mono">${esc(d.schema_applied||'none')}</span>`],
+        ['Mode:', `<span class="mono">${mode}</span>`],
+        ['Changed fields:', `<strong style="color:var(--high)">${changed.length}</strong>`],
+        ...(d.excluded_fields?.length ? [['Excluded:', tags(d.excluded_fields)]] : []),
+      ])}
+      <div class="cols2">
+        <div class="card">
+          <div class="card-title">Original</div>
+          <div class="code">${renderDiff(record, san, false)}</div>
+        </div>
+        <div class="card">
+          <div class="card-title">Sanitized</div>
+          <div class="code">${renderDiff(san, record, true)}</div>
+        </div>
+      </div>
+    `);
+  } catch(e) { err('record-out', 'Request failed: ' + e.message); }
+  finally    { busy('record-btn', false, 'Process Record'); }
+}
+
+// ── Init ─────────────────────────────────────────────────────
+health();
+catalogs();
+setInterval(health, 30000);
+</script>
+</body>
+</html>

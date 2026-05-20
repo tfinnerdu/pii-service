@@ -5,6 +5,7 @@ Designed for Doane University's AI platform. All processing is local via
 Microsoft Presidio — no text leaves the machine or the cluster.
 
 Endpoints:
+  GET  /ui                           - Browser dev console (disabled when API_KEY is set)
   GET  /health                       - Liveness/readiness (K8s probes, no auth)
   GET  /health/deep                  - Readiness with Presidio warm-up verification (no auth)
   GET  /metrics                      - Prometheus-format telemetry scrape target (no auth)
@@ -41,7 +42,7 @@ import time
 import urllib.parse
 import uuid
 
-from flask import Flask, request, jsonify, g
+from flask import Flask, request, jsonify, g, render_template
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -128,6 +129,24 @@ def _preprocess_text(text: str) -> str:
         except Exception:
             pass
     return text
+
+
+# ---------------------------------------------------------------------------
+# GET /ui — browser dev console (only when auth is disabled or UI_ENABLED=true)
+# ---------------------------------------------------------------------------
+
+@app.route("/ui")
+def ui():
+    ui_flag = os.getenv("UI_ENABLED", "").lower()
+    if ui_flag == "false":
+        return jsonify({"error": "UI disabled.", "code": "UI_DISABLED"}), 403
+    if ui_flag != "true" and is_auth_enabled():
+        return jsonify({
+            "error": "Dev console is only available when API_KEY is unset (local development). "
+                     "Set UI_ENABLED=true to override.",
+            "code": "UI_DISABLED",
+        }), 403
+    return render_template("ui.html")
 
 
 # Auth initialized at module load so the startup warning appears before first request
