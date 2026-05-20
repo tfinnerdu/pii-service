@@ -45,7 +45,7 @@ import uuid
 from flask import Flask, request, jsonify, g, render_template
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
 from pii_guard import PiiGuard, SanitizeMode, DOANE_RECOGNIZER_REGISTRY
 from pii_guard.auth import init_auth, require_api_key, is_auth_enabled, list_key_names, generate_key
