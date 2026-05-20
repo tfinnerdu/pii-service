@@ -13,10 +13,21 @@ $Root   = $PSScriptRoot
 $Log    = "$Root\.hub-logs\pii-service.log"
 $LogErr = "$Root\.hub-logs\pii-service.err"
 
+# Kill any stale instance - hub kills the shell but not Python child processes,
+# leaving the log files locked on the next launch.
+try {
+    $stale = Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -like "*app.py*" -and $_.CommandLine -like "*$Root*" }
+    if ($stale) {
+        $stale | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+        Start-Sleep -Milliseconds 500
+    }
+} catch {}
+
 # Create log dir, wipe old logs
 New-Item -ItemType Directory -Path "$Root\.hub-logs" -Force | Out-Null
-if (Test-Path $Log)    { Remove-Item $Log    -ErrorAction SilentlyContinue }
-if (Test-Path $LogErr) { Remove-Item $LogErr -ErrorAction SilentlyContinue }
+if (Test-Path $Log)    { Remove-Item $Log }
+if (Test-Path $LogErr) { Remove-Item $LogErr }
 
 # Pull latest code if requested
 if ($Pull) {
