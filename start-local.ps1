@@ -23,11 +23,11 @@ if ($Pull) {
     Write-Host "Pulling latest code..." -ForegroundColor Cyan
     git -C $Root pull
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "WARNING: git pull failed — continuing with current code" -ForegroundColor Yellow
+        Write-Host "WARNING: git pull failed - continuing with current code" -ForegroundColor Yellow
     }
 }
 
-# Activate venv — error if missing (VS manages it for this project)
+# Activate venv - error if missing (VS manages it for this project)
 $Venv = "$Root\.venv\Scripts\Activate.ps1"
 if (-not (Test-Path $Venv)) {
     Write-Host "ERROR: venv not found at $Venv" -ForegroundColor Red
