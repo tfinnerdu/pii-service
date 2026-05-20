@@ -1,69 +1,67 @@
-# pii-service start-local.ps1
-# Starts the PII Service locally for development.
-# Pure ASCII only - no Unicode characters.
+# pii-service local dev launcher
 #
 # Usage:
 #   .\start-local.ps1              Normal start
 #   .\start-local.ps1 -ForceDeps  Reinstall all requirements before starting
 
-# Accept -ForceDeps (manual) or hub launcher's two-token form: '-' 'ForceDeps'
-$ForceDeps = $false
-foreach ($a in $args) {
-    if ($a -match '^-?ForceDeps$') { $ForceDeps = $true }
-}
+param([switch]$ForceDeps)
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = 'Stop'
+$Root   = $PSScriptRoot
+$Log    = "$Root\.hub-logs\pii-service.log"
+$LogErr = "$Root\.hub-logs\pii-service.err"
 
-$PORT   = if ($env:PORT) { $env:PORT } else { "5900" }
-$VENV   = ".venv\Scripts\python.exe"
-$PIP    = ".venv\Scripts\pip.exe"
-$LOG    = ".hub-logs\pii-service.log"
-$LOGERR = ".hub-logs\pii-service.err"
+# Create log dir, wipe old logs
+New-Item -ItemType Directory -Path "$Root\.hub-logs" -Force | Out-Null
+if (Test-Path $Log)    { Remove-Item $Log }
+if (Test-Path $LogErr) { Remove-Item $LogErr }
 
-# Wipe hub-logs so stale output doesn't confuse the launcher
-if (Test-Path ".hub-logs") {
-    if (Test-Path $LOG)    { Clear-Content $LOG    -ErrorAction SilentlyContinue }
-    if (Test-Path $LOGERR) { Clear-Content $LOGERR -ErrorAction SilentlyContinue }
-} else {
-    New-Item -ItemType Directory -Path ".hub-logs" | Out-Null
-}
-
-if (-not (Test-Path $VENV)) {
-    Write-Host "ERROR: venv not found at $VENV"
+# Activate venv — error if missing (VS manages it for this project)
+$Venv = "$Root\.venv\Scripts\Activate.ps1"
+if (-not (Test-Path $Venv)) {
+    Write-Host "ERROR: venv not found at $Venv" -ForegroundColor Red
     Write-Host "Create it in Visual Studio: Add Environment -> Existing environment"
-    Write-Host "Then: $PIP install -r requirements.txt"
     exit 1
 }
+. $Venv
 
-if ($ForceDeps) {
-    Write-Host "ForceDeps: reinstalling requirements..."
-    & $PIP install -r requirements.txt
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "ERROR: pip install failed"
-        exit 1
+# Install deps if requested or flask is missing
+if ($ForceDeps -or (-not (Test-Path "$Root\.venv\Lib\site-packages\flask"))) {
+    Write-Host "Installing dependencies..." -ForegroundColor Cyan
+    pip install -r "$Root\requirements.txt" --quiet
+}
+
+# Copy .env.example if no .env present
+if (-not (Test-Path "$Root\.env")) {
+    Write-Host "WARNING: .env not found - copying from .env.example" -ForegroundColor Yellow
+    Copy-Item "$Root\.env.example" "$Root\.env"
+}
+
+# Load .env into process environment so it takes precedence over hub-injected vars
+Get-Content "$Root\.env" | ForEach-Object {
+    if ($_ -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$') {
+        $key = $matches[1]
+        $val = $matches[2].Trim().Trim('"').Trim("'")
+        [System.Environment]::SetEnvironmentVariable($key, $val, 'Process')
     }
 }
 
-if (-not (Test-Path ".env")) {
-    Write-Host "WARNING: .env not found - copying from .env.example"
-    Copy-Item ".env.example" ".env"
-}
+$env:FLASK_DEBUG = if ($env:FLASK_ENV -eq 'production') { '0' } else { '1' }
 
-$FLASK_DEBUG = if ($env:FLASK_ENV -eq "production") { "0" } else { "1" }
-
-# Filter out WSL, vEthernet, and link-local adapters for LAN IP display
+# Get LAN IP (skip link-local, vEthernet, WSL, loopback)
 $IP = (Get-NetIPAddress -AddressFamily IPv4 |
-    Where-Object {
-        $_.InterfaceAlias -notmatch "Loopback|vEthernet|WSL" -and
-        -not ($_.IPAddress -like "169.254.*")
-    } |
+    Where-Object { $_.IPAddress -notlike '169.254.*' -and
+                   $_.InterfaceAlias -notlike '*vEthernet*' -and
+                   $_.InterfaceAlias -notlike '*WSL*' -and
+                   $_.IPAddress -ne '127.0.0.1' } |
     Select-Object -First 1).IPAddress
 
+$Port = if ($env:PORT) { $env:PORT } else { '5900' }
 Write-Host "---"
 Write-Host "pii-service v1.0.0"
-Write-Host "  Port:    $PORT"
-Write-Host "  Local:   http://localhost:$PORT/health"
-if ($IP) { Write-Host "  Network: http://${IP}:$PORT/health" }
+Write-Host "  Port:    $Port"
+Write-Host "  Local:   http://localhost:${Port}/health"
+if ($IP) { Write-Host "  Network: http://${IP}:${Port}/health" }
 Write-Host "  Docs:    https://github.com/tfinnerdu/pii-service"
 Write-Host "---"
 Write-Host "Endpoints:"
@@ -77,10 +75,6 @@ Write-Host "  GET  /api/v1/policies          - List named policies"
 Write-Host "  GET  /api/v1/stats             - Service telemetry"
 Write-Host "---"
 
-$env:FLASK_APP   = "app.py"
-$env:FLASK_ENV   = if ($env:FLASK_ENV) { $env:FLASK_ENV } else { "development" }
-$env:FLASK_DEBUG = $FLASK_DEBUG
-$env:PORT        = $PORT
-
-# Use python app.py (not flask run) for use_reloader=False compatibility with hub launcher
-& $VENV -u app.py
+# Continue so Python's stderr logging doesn't trip PowerShell's error handler
+$ErrorActionPreference = 'Continue'
+python -u "$Root\app.py" >> $Log 2>> $LogErr
