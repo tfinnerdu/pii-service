@@ -68,6 +68,7 @@
     <Content Include="README.md" />
     <Content Include="openapi.yaml" />
     <Content Include="templates\ui.html" />
+    <Content Include="templates\swagger.html" />
   </ItemGroup>
   <ItemGroup>
     <Folder Include="docs\" />

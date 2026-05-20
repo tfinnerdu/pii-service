@@ -119,7 +119,10 @@
 
 <header>
   <div><span class="logo">pii-service <small>dev console</small></span></div>
-  <div class="health"><div class="hdot" id="hdot"></div><span id="htxt">checking…</span></div>
+  <div style="display:flex;align-items:center;gap:16px">
+    <a href="/swagger" target="_blank" style="font-size:0.78rem;color:var(--accent);text-decoration:none;opacity:.8" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=.8">API Docs ↗</a>
+    <div class="health"><div class="hdot" id="hdot"></div><span id="htxt">checking…</span></div>
+  </div>
 </header>
 
 <nav>

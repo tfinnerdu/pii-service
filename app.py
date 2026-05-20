@@ -149,6 +149,22 @@ def ui():
     return render_template("ui.html")
 
 
+@app.route("/openapi.yaml")
+def openapi_yaml():
+    """Serve the raw OpenAPI spec (consumed by /swagger UI)."""
+    import pathlib
+    spec_path = pathlib.Path(__file__).parent / "openapi.yaml"
+    if not spec_path.exists():
+        return jsonify({"error": "openapi.yaml not found"}), 404
+    return spec_path.read_text(encoding="utf-8"), 200, {"Content-Type": "text/yaml; charset=utf-8"}
+
+
+@app.route("/swagger")
+def swagger_ui():
+    """Swagger UI — interactive API docs."""
+    return render_template("swagger.html"), 200
+
+
 # Auth initialized at module load so the startup warning appears before first request
 with app.app_context():
     init_auth()
