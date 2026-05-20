@@ -6,9 +6,11 @@
 #   .\start-local.ps1              Normal start
 #   .\start-local.ps1 -ForceDeps  Reinstall all requirements before starting
 
-param(
-    [switch]$ForceDeps
-)
+# Accept -ForceDeps (manual) or "- ForceDeps" two-token form from hub launcher
+$ForceDeps = $false
+foreach ($a in $args) {
+    if ($a -match '^-?ForceDeps$') { $ForceDeps = $true }
+}
 
 $ErrorActionPreference = "Stop"
 
