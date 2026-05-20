@@ -339,27 +339,31 @@ def list_recognizers():
     Custom recognizers are fully described. Presidio built-ins list entity + context only.
     Used by the dev console Rules tab.
     """
-    from pii_guard.recognizers import _RECOGNIZER_SPECS, _PRESIDIO_CONTEXT
-    custom_entities = {spec["entity"] for spec in _RECOGNIZER_SPECS}
-    return jsonify({
-        "custom": [
-            {
-                "entity": spec["entity"],
-                "name": spec["name"],
-                "patterns": [
-                    {"name": n, "regex": rx, "score": sc}
-                    for n, rx, sc in spec["patterns"]
-                ],
-                "context": spec.get("context", []),
-            }
-            for spec in _RECOGNIZER_SPECS
-        ],
-        "presidio_builtins": [
-            {"entity": entity, "context": ctx}
-            for entity, ctx in _PRESIDIO_CONTEXT.items()
-            if entity not in custom_entities
-        ],
-    })
+    try:
+        from pii_guard.recognizers import _RECOGNIZER_SPECS, _PRESIDIO_CONTEXT
+        custom_entities = {spec["entity"] for spec in _RECOGNIZER_SPECS}
+        return jsonify({
+            "custom": [
+                {
+                    "entity": spec["entity"],
+                    "name": spec["name"],
+                    "patterns": [
+                        {"name": n, "regex": rx, "score": sc}
+                        for n, rx, sc in spec["patterns"]
+                    ],
+                    "context": spec.get("context", []),
+                }
+                for spec in _RECOGNIZER_SPECS
+            ],
+            "presidio_builtins": [
+                {"entity": entity, "context": list(ctx)}
+                for entity, ctx in _PRESIDIO_CONTEXT.items()
+                if entity not in custom_entities
+            ],
+        })
+    except Exception as exc:
+        logger.error("list_recognizers failed: %s", exc, exc_info=True)
+        return error_response(str(exc), "RECOGNIZERS_ERROR", 500)
 
 
 @app.route("/api/v1/entities")

@@ -2,9 +2,11 @@
 #
 # Usage:
 #   .\start-local.ps1              Normal start
+#   .\start-local.ps1 -Pull        Git pull before starting
 #   .\start-local.ps1 -ForceDeps  Reinstall all requirements before starting
+#   .\start-local.ps1 -Pull -ForceDeps  Pull + reinstall + start
 
-param([switch]$ForceDeps)
+param([switch]$ForceDeps, [switch]$Pull)
 
 $ErrorActionPreference = 'Stop'
 $Root   = $PSScriptRoot
@@ -15,6 +17,15 @@ $LogErr = "$Root\.hub-logs\pii-service.err"
 New-Item -ItemType Directory -Path "$Root\.hub-logs" -Force | Out-Null
 if (Test-Path $Log)    { Remove-Item $Log }
 if (Test-Path $LogErr) { Remove-Item $LogErr }
+
+# Pull latest code if requested
+if ($Pull) {
+    Write-Host "Pulling latest code..." -ForegroundColor Cyan
+    git -C $Root pull
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "WARNING: git pull failed — continuing with current code" -ForegroundColor Yellow
+    }
+}
 
 # Activate venv — error if missing (VS manages it for this project)
 $Venv = "$Root\.venv\Scripts\Activate.ps1"
@@ -56,10 +67,16 @@ $IP = (Get-NetIPAddress -AddressFamily IPv4 |
                    $_.IPAddress -ne '127.0.0.1' } |
     Select-Object -First 1).IPAddress
 
+# Resolve current git branch and commit for the banner
+$Branch = (git -C $Root rev-parse --abbrev-ref HEAD 2>$null)
+$Commit = (git -C $Root rev-parse --short HEAD 2>$null)
+$GitInfo = if ($Branch -and $Commit) { "$Branch @ $Commit" } else { 'unknown' }
+
 $Port = if ($env:PORT) { $env:PORT } else { '5900' }
 Write-Host "---"
 Write-Host "pii-service v1.0.0"
 Write-Host "  Port:    $Port"
+Write-Host "  Branch:  $GitInfo"
 Write-Host "  Local:   http://localhost:${Port}/health"
 if ($IP) { Write-Host "  Network: http://${IP}:${Port}/health" }
 Write-Host "  Docs:    https://github.com/tfinnerdu/pii-service"
@@ -72,6 +89,7 @@ Write-Host "  POST /api/v1/preflight         - AI safety check"
 Write-Host "  POST /api/v1/policy/apply      - Named policy (ai_prompt, embedding, ferpa_strict...)"
 Write-Host "  POST /api/v1/file              - Upload CSV/JSON for sanitization"
 Write-Host "  GET  /api/v1/policies          - List named policies"
+Write-Host "  GET  /api/v1/recognizers       - Recognizer pattern specs"
 Write-Host "  GET  /api/v1/stats             - Service telemetry"
 Write-Host "---"
 
