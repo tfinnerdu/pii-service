@@ -2191,7 +2191,7 @@ def _process_xlsx(guard, content: bytes, columns: list, mode, exclude_types, inc
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 5900))
+    port = int(os.getenv("PORT", 5006))
     debug = os.getenv("FLASK_ENV", "development") == "development"
     logger.info("Starting %s v%s on port %d", SERVICE, VERSION, port)
     app.run(host="0.0.0.0", port=port, use_reloader=False, debug=debug)

@@ -72,7 +72,7 @@ $Branch = (git -C $Root rev-parse --abbrev-ref HEAD 2>$null)
 $Commit = (git -C $Root rev-parse --short HEAD 2>$null)
 $GitInfo = if ($Branch -and $Commit) { "$Branch @ $Commit" } else { 'unknown' }
 
-$Port = if ($env:PORT) { $env:PORT } else { '5900' }
+$Port = if ($env:PORT) { $env:PORT } else { '5006' }
 Write-Host "---"
 Write-Host "pii-service v1.0.0"
 Write-Host "  Port:    $Port"
