@@ -6,7 +6,8 @@
     <ProjectGuid>{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}</ProjectGuid>
     <ProjectHome>.</ProjectHome>
     <StartupFile>app.py</StartupFile>
-    <SearchPath></SearchPath>
+    <SearchPath>
+    </SearchPath>
     <WorkingDirectory>.</WorkingDirectory>
     <OutputPath>.</OutputPath>
     <ProjectType>Django</ProjectType>
@@ -62,6 +63,19 @@
     <Content Include="docs\coverage-accountability.md" />
     <Content Include="docs\user-guide.md" />
     <Content Include="TESTING.md" />
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="docs\" />
+    <Folder Include="examples\" />
+    <Folder Include="k8s\" />
+    <Folder Include="n8n\" />
+    <Folder Include="pii_guard\" />
+    <Folder Include="tests\" />
+    <Folder Include="tests\characterization\" />
+    <Folder Include="tests\integration\" />
+    <Folder Include="tests\unit\" />
+    <Folder Include="workers\" />
+    <Folder Include="workflows\" />
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />
 </Project>
