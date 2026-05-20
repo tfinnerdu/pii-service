@@ -51,6 +51,7 @@
     <Compile Include="examples\ai_preflight.py" />
   </ItemGroup>
   <ItemGroup>
+    <Content Include=".env" />
     <Content Include=".env.example" />
     <Content Include=".gitignore" />
     <Content Include="LICENSE" />
@@ -75,6 +76,7 @@
     <Folder Include="k8s\" />
     <Folder Include="n8n\" />
     <Folder Include="pii_guard\" />
+    <Folder Include="templates\" />
     <Folder Include="tests\" />
     <Folder Include="tests\characterization\" />
     <Folder Include="tests\integration\" />
