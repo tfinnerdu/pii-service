@@ -34,6 +34,7 @@
     <Compile Include="pii_guard\auth.py" />
     <Compile Include="pii_guard\config.py" />
     <Compile Include="workers\conductor_pii_worker.py" />
+    <Compile Include="workers\__init__.py" />
     <Compile Include="tests\conftest.py" />
     <Compile Include="tests\unit\test_guard.py" />
     <Compile Include="tests\unit\test_recognizers.py" />
@@ -44,6 +45,7 @@
     <Compile Include="tests\characterization\test_recognizer_patterns.py" />
     <Compile Include="tests\characterization\test_env_vars.py" />
     <Compile Include="tests\characterization\test_k8s_manifest.py" />
+    <Compile Include="tests\characterization\test_conductor_contracts.py" />
     <Compile Include="tests\integration\test_api_endpoints.py" />
     <Compile Include="examples\usage.py" />
     <Compile Include="examples\ai_preflight.py" />
@@ -63,6 +65,9 @@
     <Content Include="docs\coverage-accountability.md" />
     <Content Include="docs\user-guide.md" />
     <Content Include="TESTING.md" />
+    <Content Include="README.md" />
+    <Content Include="openapi.yaml" />
+    <Content Include="templates\ui.html" />
   </ItemGroup>
   <ItemGroup>
     <Folder Include="docs\" />
