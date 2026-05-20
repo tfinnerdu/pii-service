@@ -113,13 +113,33 @@
 
     hr{border:none;border-top:1px solid var(--border);margin:12px 0}
     .mono{font-family:'SF Mono','Fira Code',monospace;font-size:.75rem}
+
+    /* ── Rules tab ── */
+    .policy-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+    .policy-mode{font-size:.68rem;font-weight:700;padding:2px 8px;border-radius:10px;background:rgba(99,102,241,.15);color:var(--accent-hover)}
+    .score-pill{display:inline-block;padding:1px 7px;border-radius:10px;font-size:.68rem;font-weight:700}
+    .s-hi{background:rgba(22,163,74,.2);color:var(--low)}
+    .s-med{background:rgba(217,119,6,.2);color:var(--medium)}
+    .s-lo{background:rgba(99,102,241,.15);color:var(--accent-hover)}
+    .rx{font-family:'SF Mono','Fira Code',monospace;font-size:.65rem;color:var(--accent-hover);word-break:break-all}
+    details.rec>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:10px;padding:9px 14px;background:var(--surface);border:1px solid var(--border);border-radius:8px;user-select:none}
+    details.rec>summary::-webkit-details-marker{display:none}
+    details.rec>summary .arr{margin-left:auto;color:var(--muted);font-size:.65rem}
+    details.rec>summary .arr::before{content:'▼'}
+    details.rec[open]>summary{border-bottom-left-radius:0;border-bottom-right-radius:0}
+    details.rec[open]>summary .arr::before{content:'▲'}
+    details.rec>.rec-body{background:var(--surface);border:1px solid var(--border);border-top:none;border-bottom-left-radius:8px;border-bottom-right-radius:8px;padding:12px}
+    .rules-h{font-size:.85rem;font-weight:700;color:var(--text);margin-bottom:12px}
   </style>
 </head>
 <body>
 
 <header>
   <div><span class="logo">pii-service <small>dev console</small></span></div>
-  <div class="health"><div class="hdot" id="hdot"></div><span id="htxt">checking…</span></div>
+  <div style="display:flex;align-items:center;gap:16px">
+    <a href="/swagger" target="_blank" style="font-size:0.78rem;color:var(--accent);text-decoration:none;opacity:.8" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=.8">API Docs ↗</a>
+    <div class="health"><div class="hdot" id="hdot"></div><span id="htxt">checking…</span></div>
+  </div>
 </header>
 
 <nav>
@@ -128,6 +148,7 @@
   <button class="tab" data-tab="policy">Policy</button>
   <button class="tab" data-tab="file">File Upload</button>
   <button class="tab" data-tab="record">Record / Schema</button>
+  <button class="tab" data-tab="rules">Rules</button>
 </nav>
 
 <div class="wrap">
@@ -263,16 +284,41 @@
   </div>
 </div>
 
+<!-- ══════════════════════════════════════════════════════════
+     RULES
+══════════════════════════════════════════════════════════ -->
+<div class="pane" id="tab-rules">
+  <div class="cols" style="margin-bottom:20px">
+    <div class="card">
+      <div class="card-title">Quick Test</div>
+      <div class="fg">
+        <label>Text to test</label>
+        <textarea id="rt-text" rows="7" placeholder="Paste text to test detection…&#10;&#10;e.g. My SSN is 111-11-1111 and student ID D1234567"></textarea>
+      </div>
+      <div class="fg">
+        <label>Filter by entity (optional)</label>
+        <select id="rt-filter"><option value="">— all entities —</option></select>
+      </div>
+      <button class="btn btn-p" id="rt-btn" onclick="doRulesTest()">Test Detection</button>
+    </div>
+    <div id="rt-out"><div class="empty">Detection results appear here</div></div>
+  </div>
+  <div id="rules-content"></div>
+</div>
+
 </div><!-- .wrap -->
 
 <script>
 // ── Tab nav ──────────────────────────────────────────────────
+let _rulesLoaded = false;
+
 document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
   const id = t.dataset.tab;
   document.querySelectorAll('.tab').forEach(x => x.classList.remove('on'));
   document.querySelectorAll('.pane').forEach(x => x.classList.remove('on'));
   t.classList.add('on');
   document.getElementById('tab-' + id).classList.add('on');
+  if (id === 'rules' && !_rulesLoaded) loadRules();
 }));
 
 // ── Utilities ────────────────────────────────────────────────
@@ -615,6 +661,136 @@ async function doRecord() {
     `);
   } catch(e) { err('record-out', 'Request failed: ' + e.message); }
   finally    { busy('record-btn', false, 'Process Record'); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// RULES
+// ═══════════════════════════════════════════════════════════════
+const scorePill = s => {
+  const cls = s >= 0.75 ? 's-hi' : s >= 0.4 ? 's-med' : 's-lo';
+  return `<span class="score-pill ${cls}">${s}</span>`;
+};
+
+async function loadRules() {
+  out('rules-content', '<div class="empty">Loading rules…</div>');
+  try {
+    const [recR, polR, entR] = await Promise.all([
+      fetch('/api/v1/recognizers'),
+      fetch('/api/v1/policies'),
+      fetch('/api/v1/entities'),
+    ]);
+    const rec = await recR.json();
+    const pol = await polR.json();
+    const ent = await entR.json();
+
+    const policies = pol.policies || [];
+    const custom   = rec.custom || [];
+    const builtins = rec.presidio_builtins || [];
+
+    // Populate entity filter dropdown (deduplicated)
+    const sel = document.getElementById('rt-filter');
+    const allEnt = [...new Set([...(ent.education_custom||[]), ...(ent.presidio_defaults||[])])].sort();
+    allEnt.forEach(e => { if (!sel.querySelector(`option[value="${CSS.escape(e)}"]`)) sel.add(new Option(e, e)); });
+
+    const polHtml = `
+      <p class="rules-h">Policies</p>
+      <div class="policy-grid" style="margin-bottom:24px">
+        ${policies.map(p => `
+          <div class="card">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+              <strong>${esc(p.name)}</strong><span class="policy-mode">${esc(p.default_mode)}</span>
+            </div>
+            <p style="font-size:.75rem;color:var(--muted);margin-bottom:10px;line-height:1.45">${esc(p.description)}</p>
+            ${p.block_entity_types?.length ? `
+              <div style="margin-bottom:7px">
+                <span style="font-size:.62rem;color:var(--high);font-weight:700;text-transform:uppercase;letter-spacing:.06em">Blocks </span>
+                ${p.block_entity_types.map(e=>`<span class="et" style="background:rgba(220,38,38,.12);color:var(--high)">${esc(e)}</span>`).join('')}
+              </div>` : ''}
+            ${p.pass_through_entity_types?.length ? `
+              <div>
+                <span style="font-size:.62rem;color:var(--low);font-weight:700;text-transform:uppercase;letter-spacing:.06em">Passes </span>
+                ${p.pass_through_entity_types.map(e=>`<span class="et" style="background:rgba(22,163,74,.12);color:var(--low)">${esc(e)}</span>`).join('')}
+              </div>` : ''}
+            ${p.exclude_any_pii ? `<div style="margin-top:8px"><span class="rb rCRITICAL">exclude any PII</span></div>` : ''}
+          </div>`).join('')}
+      </div>`;
+
+    const customHtml = `
+      <p class="rules-h">Custom Recognizers <small style="font-weight:400;color:var(--muted)">(${custom.length})</small></p>
+      <div style="margin-bottom:24px">
+        ${custom.map(r => `
+          <details class="rec" style="margin-bottom:6px">
+            <summary>
+              <span class="et">${esc(r.entity)}</span>
+              <span style="font-size:.75rem;color:var(--muted)">${esc(r.name)}</span>
+              <span style="font-size:.68rem;color:var(--muted)">${r.patterns.length} pattern${r.patterns.length!==1?'s':''}</span>
+              <span class="arr"></span>
+            </summary>
+            <div class="rec-body">
+              <table>
+                <thead><tr><th>Pattern</th><th>Score</th><th>Regex</th></tr></thead>
+                <tbody>${r.patterns.map(p=>`<tr>
+                  <td class="mono" style="white-space:nowrap">${esc(p.name)}</td>
+                  <td>${scorePill(p.score)}</td>
+                  <td class="rx">${esc(p.regex)}</td>
+                </tr>`).join('')}</tbody>
+              </table>
+              ${r.context?.length ? `<div style="margin-top:10px;font-size:.72rem;color:var(--muted)">Context: ${r.context.map(c=>`<span class="et" style="font-size:.65rem">${esc(c)}</span>`).join(' ')}</div>` : ''}
+            </div>
+          </details>`).join('')}
+      </div>`;
+
+    const builtinHtml = builtins.length ? `
+      <p class="rules-h">Presidio Built-ins <small style="font-weight:400;color:var(--muted)">(${builtins.length})</small></p>
+      <div class="card">
+        <table>
+          <thead><tr><th>Entity</th><th>Context Words</th></tr></thead>
+          <tbody>${builtins.map(b=>`<tr>
+            <td><span class="et">${esc(b.entity)}</span></td>
+            <td style="font-size:.72rem;color:var(--muted)">${(b.context||[]).join(', ')||'—'}</td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </div>` : '';
+
+    out('rules-content', polHtml + customHtml + builtinHtml);
+    _rulesLoaded = true;
+  } catch(e) { out('rules-content', `<div class="err">Failed to load rules: ${esc(e.message)}</div>`); }
+}
+
+async function doRulesTest() {
+  const text   = document.getElementById('rt-text').value.trim();
+  const filter = document.getElementById('rt-filter').value;
+  if (!text) return;
+  busy('rt-btn', true);
+  try {
+    const d = await (await api('/api/v1/explain', {method:'POST', body:JSON.stringify({text})})).json();
+    if (d.error) { err('rt-out', d.error); return; }
+    let hits = d.hits || [];
+    if (filter) hits = hits.filter(h => h.entity_type === filter);
+
+    out('rt-out', `
+      ${sbar([['Hits:', `<strong>${hits.length}</strong>`], ...(filter?[['Filter:', `<span class="et">${esc(filter)}</span>`]]:[]) ])}
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-title">Highlighted</div>
+        <div class="htext">${highlight(text, hits)}</div>
+      </div>
+      ${!hits.length ? `<div class="empty">No hits${filter?' for '+esc(filter):''}</div>` : `
+      <div class="card">
+        <div class="card-title">Detection breakdown</div>
+        <table>
+          <thead><tr><th>Entity</th><th>Score</th><th>Recognizer</th><th>Pattern</th><th>Context</th></tr></thead>
+          <tbody>${hits.map(h=>`<tr>
+            <td><span class="et">${esc(h.entity_type)}</span></td>
+            <td>${scorePill(h.score)}</td>
+            <td class="mono" style="font-size:.72rem">${esc(h.recognizer||'—')}</td>
+            <td class="mono" style="font-size:.68rem;color:var(--accent-hover)">${esc(h.pattern_name||'—')}</td>
+            <td style="font-size:.7rem;color:var(--muted)">${(h.context_words||[]).slice(0,5).join(', ')||'—'}</td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </div>`}
+    `);
+  } catch(e) { err('rt-out', 'Request failed: ' + e.message); }
+  finally { busy('rt-btn', false, 'Test Detection'); }
 }
 
 // ── Init ─────────────────────────────────────────────────────

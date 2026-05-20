@@ -222,6 +222,22 @@ _RECOGNIZER_SPECS = [
         ],
         "context": ["license", "npi", "dea", "medical", "provider", "prescriber", "physician", "nurse"],
     },
+    {
+        # Overrides Presidio's built-in UsSsnRecognizer (removed in build_registry).
+        # Presidio's built-in rejects all-same-digit SSNs (111-11-1111, etc.) via
+        # invalidate_result(), which is overly aggressive for a detection-first service.
+        # Using PatternRecognizer (no invalidate_result override) + tighter regex gives
+        # 0.85 base confidence for the standard dashed format without false rejections.
+        "entity": "US_SSN",
+        "name": "UsSsnCustomRecognizer",
+        "patterns": [
+            ("ssn_dashed",  r"(?!219-09-9999|078-05-1120)(?!666|000|9\d{2})\d{3}-(?!00)\d{2}-(?!0{4})\d{4}", 0.85),
+            ("ssn_spaced",  r"(?!219-09-9999|078-05-1120)(?!666|000|9\d{2})\d{3} (?!00)\d{2} (?!0{4})\d{4}",  0.75),
+            ("ssn_dotted",  r"(?!219\.09\.9999|078\.05\.1120)(?!666|000|9\d{2})\d{3}\.(?!00)\d{2}\.(?!0{4})\d{4}", 0.75),
+            ("ssn_nodash",  r"(?!219099999|078051120)(?!666|000|9\d{2})\d{9}(?!\d)",                           0.3),
+        ],
+        "context": ["ssn", "social security", "social", "ss#", "ssn#", "ssid", "tax id"],
+    },
 ]
 
 
@@ -285,6 +301,7 @@ def build_registry():
 
     registry = RecognizerRegistry()
     registry.load_predefined_recognizers()
+    registry.remove_recognizer("UsSsnRecognizer")  # Replaced by UsSsnCustomRecognizer below
 
     for spec in _RECOGNIZER_SPECS:
         patterns = [Pattern(n, rx, sc) for n, rx, sc in spec["patterns"]]
