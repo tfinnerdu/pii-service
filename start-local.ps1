@@ -15,8 +15,8 @@ $LogErr = "$Root\.hub-logs\pii-service.err"
 
 # Create log dir, wipe old logs
 New-Item -ItemType Directory -Path "$Root\.hub-logs" -Force | Out-Null
-if (Test-Path $Log)    { Remove-Item $Log }
-if (Test-Path $LogErr) { Remove-Item $LogErr }
+if (Test-Path $Log)    { Remove-Item $Log    -ErrorAction SilentlyContinue }
+if (Test-Path $LogErr) { Remove-Item $LogErr -ErrorAction SilentlyContinue }
 
 # Pull latest code if requested
 if ($Pull) {
