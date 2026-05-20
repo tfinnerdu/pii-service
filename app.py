@@ -331,6 +331,37 @@ def metrics():
 # Entity catalog
 # ---------------------------------------------------------------------------
 
+@app.route("/api/v1/recognizers")
+@require_api_key
+def list_recognizers():
+    """
+    All recognizer specs: entity type, patterns (name/regex/score), context words.
+    Custom recognizers are fully described. Presidio built-ins list entity + context only.
+    Used by the dev console Rules tab.
+    """
+    from pii_guard.recognizers import _RECOGNIZER_SPECS, _PRESIDIO_CONTEXT
+    custom_entities = {spec["entity"] for spec in _RECOGNIZER_SPECS}
+    return jsonify({
+        "custom": [
+            {
+                "entity": spec["entity"],
+                "name": spec["name"],
+                "patterns": [
+                    {"name": n, "regex": rx, "score": sc}
+                    for n, rx, sc in spec["patterns"]
+                ],
+                "context": spec.get("context", []),
+            }
+            for spec in _RECOGNIZER_SPECS
+        ],
+        "presidio_builtins": [
+            {"entity": entity, "context": ctx}
+            for entity, ctx in _PRESIDIO_CONTEXT.items()
+            if entity not in custom_entities
+        ],
+    })
+
+
 @app.route("/api/v1/entities")
 @require_api_key
 def list_entities():
