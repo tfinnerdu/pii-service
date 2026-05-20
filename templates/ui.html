@@ -679,9 +679,13 @@ async function loadRules() {
       fetch('/api/v1/policies'),
       fetch('/api/v1/entities'),
     ]);
-    const rec = await recR.json();
-    const pol = await polR.json();
-    const ent = await entR.json();
+    const checkJson = async (r, ep) => {
+      if (!r.ok) throw new Error(`${ep} returned HTTP ${r.status} — restart the service to pick up new routes`);
+      return r.json();
+    };
+    const rec = await checkJson(recR, '/api/v1/recognizers');
+    const pol = await checkJson(polR, '/api/v1/policies');
+    const ent = await checkJson(entR, '/api/v1/entities');
 
     const policies = pol.policies || [];
     const custom   = rec.custom || [];
