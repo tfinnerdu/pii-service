@@ -33,6 +33,8 @@
     <Compile Include="pii_guard\audit.py" />
     <Compile Include="pii_guard\auth.py" />
     <Compile Include="pii_guard\config.py" />
+    <Compile Include="utils\__init__.py" />
+    <Compile Include="utils\responses.py" />
     <Compile Include="workers\conductor_pii_worker.py" />
     <Compile Include="workers\__init__.py" />
     <Compile Include="tests\conftest.py" />
@@ -41,6 +43,7 @@
     <Compile Include="tests\unit\test_policy.py" />
     <Compile Include="tests\unit\test_audit.py" />
     <Compile Include="tests\unit\test_auth.py" />
+    <Compile Include="tests\unit\test_responses.py" />
     <Compile Include="tests\characterization\test_api_contract.py" />
     <Compile Include="tests\characterization\test_recognizer_patterns.py" />
     <Compile Include="tests\characterization\test_env_vars.py" />
@@ -82,6 +85,7 @@
     <Folder Include="tests\characterization\" />
     <Folder Include="tests\integration\" />
     <Folder Include="tests\unit\" />
+    <Folder Include="utils\" />
     <Folder Include="workers\" />
     <Folder Include="workflows\" />
   </ItemGroup>

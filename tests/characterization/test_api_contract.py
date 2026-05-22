@@ -43,43 +43,62 @@ def client():
 
 
 # ---------------------------------------------------------------------------
-# /health response shape — pinned 2025-05
+# /api/v1/health response shape — pinned 2026-05-21
+# Changed 2026-05-21: path versioned /health -> /api/v1/health (bare /health
+# deprecated per ADR-0002); uptime_seconds pinned as int, not float.
 # ---------------------------------------------------------------------------
 
 class TestHealthContract:
     """
-    Known-good: /health returns 200 with exactly these top-level keys.
+    Known-good: /api/v1/health returns 200 with exactly these top-level keys.
     If this fails, update monitoring config (Uptime Kuma, Grafana) in the same commit.
     """
+    HEALTH_PATH = "/api/v1/health"
     EXPECTED_KEYS = {"status", "service", "version", "uptime_seconds"}
     EXPECTED_SERVICE = "pii-service"
 
     def test_health_returns_200(self, client):
-        resp = client.get("/health")
+        resp = client.get(self.HEALTH_PATH)
         assert resp.status_code == 200, (
-            "/health contract broken: expected 200. "
-            "K8s liveness/readiness probes will fail if this changes."
+            "/api/v1/health contract broken: expected 200. "
+            "K8s liveness probe will fail if this changes."
         )
 
     def test_health_has_required_keys(self, client):
-        data = client.get("/health").get_json()
+        data = client.get(self.HEALTH_PATH).get_json()
         missing = self.EXPECTED_KEYS - set(data.keys())
         assert not missing, (
-            f"/health response is missing keys: {missing}. "
+            f"/api/v1/health response is missing keys: {missing}. "
             "Update Uptime Kuma and Grafana dashboard queries if this changes."
         )
 
     def test_health_service_name(self, client):
-        data = client.get("/health").get_json()
+        data = client.get(self.HEALTH_PATH).get_json()
         assert data["status"] == "ok"
         assert data["service"] == self.EXPECTED_SERVICE, (
             f"Service name changed from '{self.EXPECTED_SERVICE}' to '{data['service']}'. "
             "Update K8s deployment labels and monitoring config."
         )
 
-    def test_health_uptime_is_numeric(self, client):
-        data = client.get("/health").get_json()
-        assert isinstance(data["uptime_seconds"], (int, float))
+    def test_health_uptime_is_integer(self, client):
+        """
+        uptime_seconds must be an int — int((now - started_at).total_seconds()).
+        A bool is an int subclass; reject it explicitly.
+        """
+        data = client.get(self.HEALTH_PATH).get_json()
+        uptime = data["uptime_seconds"]
+        assert isinstance(uptime, int) and not isinstance(uptime, bool), (
+            f"uptime_seconds is {type(uptime).__name__}, must be int. "
+            "The standard pins this as an integer count of seconds."
+        )
+        assert uptime >= 0
+
+    def test_bare_health_path_is_gone(self, client):
+        """The deprecated bare /health path must not resolve — only /api/v1/health."""
+        assert client.get("/health").status_code == 404, (
+            "Bare /health still resolves. It is deprecated — the only health path "
+            "is /api/v1/health. Remove the old route."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -451,42 +470,63 @@ class TestFileUploadErrorContract:
 
 
 # ---------------------------------------------------------------------------
-# /health/deep contract — pinned 2025-05
+# /api/v1/health/deep contract — pinned 2026-05-21
+# Changed 2026-05-21: path versioned; response now carries a "checks" dict and a
+# "mock" key (the canonical live-vs-fabricated signal). The old flat "presidio"
+# and "spacy_degraded" top-level keys were replaced by checks[...].
 # ---------------------------------------------------------------------------
 
 class TestHealthDeepContract:
     """
-    Known-good: /health/deep verifies Presidio is loaded.
+    Known-good: /api/v1/health/deep probes critical dependencies.
     Returns 200 (ok or degraded) when functional, 503 when broken.
     No auth required — K8s readiness probe must be able to call this.
     """
-    EXPECTED_KEYS = {"status", "presidio", "spacy_degraded", "service", "version", "uptime_seconds"}
+    DEEP_PATH = "/api/v1/health/deep"
+    EXPECTED_KEYS = {"status", "service", "version", "uptime_seconds", "mock", "checks"}
 
     @_presidio_required
     def test_health_deep_returns_200_when_presidio_ready(self, client):
-        resp = client.get("/health/deep")
+        resp = client.get(self.DEEP_PATH)
         assert resp.status_code == 200, (
-            "/health/deep must return 200 when Presidio is working. "
+            "/api/v1/health/deep must return 200 when Presidio is working. "
             "K8s readiness probe will fail otherwise."
         )
 
     @_presidio_required
     def test_health_deep_response_shape(self, client):
-        data = client.get("/health/deep").get_json()
+        data = client.get(self.DEEP_PATH).get_json()
         missing = self.EXPECTED_KEYS - set(data.keys())
-        assert not missing, f"/health/deep missing keys: {missing}"
+        assert not missing, f"/api/v1/health/deep missing keys: {missing}"
 
     @_presidio_required
     def test_health_deep_presidio_is_ready(self, client):
-        data = client.get("/health/deep").get_json()
-        assert data["presidio"] == "ready"
+        data = client.get(self.DEEP_PATH).get_json()
+        assert data["checks"]["presidio"]["status"] == "ok", (
+            "checks.presidio.status must be 'ok' when Presidio is loaded."
+        )
 
-    @_presidio_required
+    def test_health_deep_has_checks_dict(self, client):
+        """The checks dict is required — it carries per-dependency status."""
+        data = client.get(self.DEEP_PATH).get_json()
+        assert isinstance(data.get("checks"), dict) and data["checks"], (
+            "/api/v1/health/deep must include a non-empty 'checks' dict."
+        )
+
+    def test_health_deep_has_mock_key(self, client):
+        """
+        The 'mock' key is the canonical live-vs-fabricated-data signal and is
+        required on every service that has a mock mode.
+        """
+        data = client.get(self.DEEP_PATH).get_json()
+        assert "mock" in data, "/api/v1/health/deep must include the 'mock' key."
+        assert isinstance(data["mock"], bool)
+
     def test_health_deep_no_auth_required(self, client):
-        """Readiness probe must work without any auth header."""
-        resp = client.get("/health/deep")
-        assert resp.status_code != 401 and resp.status_code != 403, (
-            "/health/deep must not require auth — K8s readiness probe cannot provide tokens."
+        """Readiness probe must work without any auth header (200 or 503, never 401/403)."""
+        resp = client.get(self.DEEP_PATH)
+        assert resp.status_code not in (401, 403), (
+            "/api/v1/health/deep must not require auth — K8s readiness probe cannot provide tokens."
         )
 
 
@@ -604,6 +644,51 @@ class TestSandboxContract:
     def test_preflight_sandbox_flag_present(self, client):
         data = client.post("/api/v1/preflight", json={"text": "some text"}).get_json()
         assert data.get("sandbox") is True
+
+
+# ---------------------------------------------------------------------------
+# Mock/Live signal contract — pinned 2026-05-21
+# ---------------------------------------------------------------------------
+
+class TestMockSignalContract:
+    """
+    Known-good: when mock (sandbox) mode is active the service must surface it in
+    two machine-readable places — the X-Mock-Mode response header and the "mock"
+    key in /api/v1/health/deep. Silent mock is a forbidden pattern; if either
+    signal disappears, fabricated data could be mistaken for real PII results.
+    """
+
+    def _set_sandbox(self, monkeypatch, on):
+        monkeypatch.setenv("PII_SANDBOX_MODE", "true" if on else "false")
+        import app as _app
+        monkeypatch.setattr(_app, "_SANDBOX_MODE", on)
+
+    def test_x_mock_mode_header_present_in_sandbox(self, client, monkeypatch):
+        self._set_sandbox(monkeypatch, True)
+        resp = client.post("/api/v1/scan", json={"text": "some text"})
+        assert resp.headers.get("X-Mock-Mode") == "true", (
+            "X-Mock-Mode: true header must be on every response in mock mode. "
+            "Consumers rely on it to detect fabricated data without parsing the body."
+        )
+
+    def test_x_mock_mode_header_absent_in_live(self, client, monkeypatch):
+        self._set_sandbox(monkeypatch, False)
+        resp = client.get("/api/v1/health")
+        assert "X-Mock-Mode" not in resp.headers, (
+            "X-Mock-Mode header must be absent in live mode — its presence means mock."
+        )
+
+    def test_health_deep_mock_true_in_sandbox(self, client, monkeypatch):
+        self._set_sandbox(monkeypatch, True)
+        data = client.get("/api/v1/health/deep").get_json()
+        assert data.get("mock") is True, (
+            "/api/v1/health/deep must report mock=true when sandbox mode is active."
+        )
+
+    def test_health_deep_mock_false_in_live(self, client, monkeypatch):
+        self._set_sandbox(monkeypatch, False)
+        data = client.get("/api/v1/health/deep").get_json()
+        assert data.get("mock") is False
 
 
 # ---------------------------------------------------------------------------
@@ -808,6 +893,45 @@ class TestUiContract:
         resp = client.get("/ui")
         for tab in (b"Scan", b"Explain", b"Policy", b"File Upload", b"Record"):
             assert tab in resp.data, f"UI missing tab: {tab}"
+
+    def test_ui_shows_live_badge_in_live_mode(self, client):
+        """The operator console must carry a persistent LIVE badge in live mode."""
+        resp = client.get("/ui")
+        assert b">LIVE<" in resp.data, (
+            "UI is missing the persistent LIVE mode badge. The mock/live state "
+            "must never be ambiguous in the operator console."
+        )
+
+    def test_ui_shows_mock_badge_in_sandbox_mode(self, client, monkeypatch):
+        """In sandbox mode the badge must flip to MOCK — silent mock is forbidden."""
+        import app as _app
+        monkeypatch.setattr(_app, "_SANDBOX_MODE", True)
+        resp = client.get("/ui")
+        assert b">MOCK<" in resp.data, (
+            "UI must show the MOCK badge when sandbox mode is active."
+        )
+
+
+# ---------------------------------------------------------------------------
+# /swagger contract — pinned 2026-05-21
+# ---------------------------------------------------------------------------
+
+class TestSwaggerContract:
+    """
+    Known-good: GET /swagger returns the Swagger UI HTML and /openapi.yaml serves
+    the spec it renders. Swagger is a conformance requirement (S-024) for any
+    service that exposes an API.
+    """
+
+    def test_swagger_returns_200_html(self, client):
+        resp = client.get("/swagger")
+        assert resp.status_code == 200
+        assert b"<html" in resp.data.lower()
+
+    def test_openapi_yaml_is_served(self, client):
+        resp = client.get("/openapi.yaml")
+        assert resp.status_code == 200, "/openapi.yaml must serve the spec for /swagger to render."
+        assert b"openapi" in resp.data.lower()
 
 
 class TestJobsStubContract:

@@ -38,7 +38,7 @@ Run tests with coverage report
 
 Quick health check (local)
 ---------------------------
-curl http://localhost:5900/health
+curl http://localhost:5900/api/v1/health
 
 Scan a text (local)
 --------------------

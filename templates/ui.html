@@ -34,6 +34,11 @@
     .hdot{width:8px;height:8px;border-radius:50%;background:#555;flex-shrink:0}
     .hdot.ok{background:var(--low)} .hdot.deg{background:var(--medium)} .hdot.fail{background:var(--high)}
 
+    /* ── Mock/Live mode badge ── */
+    .mode-badge{display:inline-flex;align-items:center;padding:3px 10px;border-radius:12px;font-size:.68rem;font-weight:700;letter-spacing:.07em}
+    .mode-badge.live{background:var(--low-bg);color:var(--low);border:1px solid var(--low)}
+    .mode-badge.mock{background:var(--medium-bg);color:var(--medium);border:1px solid var(--medium)}
+
     /* ── Tab nav ── */
     nav{display:flex;padding:0 24px;background:var(--surface);border-bottom:1px solid var(--border);overflow-x:auto;gap:2px}
     .tab{padding:10px 16px;background:transparent;border:none;border-bottom:2px solid transparent;color:var(--muted);font-size:0.85rem;cursor:pointer;white-space:nowrap;transition:.15s}
@@ -137,6 +142,7 @@
 <header>
   <div><span class="logo">pii-service <small>dev console</small></span></div>
   <div style="display:flex;align-items:center;gap:16px">
+    {% if sandbox_mode %}<span class="mode-badge mock" title="Sandbox mode — responses are fabricated, no real PII scanning">MOCK</span>{% else %}<span class="mode-badge live" title="Live mode — real Presidio PII detection">LIVE</span>{% endif %}
     <a href="/swagger" target="_blank" style="font-size:0.78rem;color:var(--accent);text-decoration:none;opacity:.8" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=.8">API Docs ↗</a>
     <div class="health"><div class="hdot" id="hdot"></div><span id="htxt">checking…</span></div>
   </div>
@@ -361,7 +367,7 @@ const sbar = items => `<div class="sbar">${items.map(([l,v])=>`<div class="si"><
 // ── Health ───────────────────────────────────────────────────
 async function health() {
   try {
-    const d = await (await fetch('/health/deep')).json();
+    const d = await (await fetch('/api/v1/health/deep')).json();
     const cl = d.status==='ok' ? 'ok' : d.status==='degraded' ? 'deg' : 'fail';
     const tx = d.status==='ok' ? 'Presidio ready' : d.status==='degraded' ? 'degraded (fallback spaCy)' : 'Presidio failed';
     document.getElementById('hdot').className = 'hdot ' + cl;

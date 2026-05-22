@@ -17,6 +17,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy source
 COPY pii_guard/ ./pii_guard/
 COPY workers/ ./workers/
+COPY utils/ ./utils/
+COPY templates/ ./templates/
+COPY openapi.yaml .
 COPY app.py .
 
 ENV PII_SCORE_THRESHOLD=0.5

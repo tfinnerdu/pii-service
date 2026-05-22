@@ -50,13 +50,13 @@ spec:
               cpu: "1000m"
           livenessProbe:
             httpGet:
-              path: /health
+              path: /api/v1/health
               port: 5900
             initialDelaySeconds: 45   # spaCy model load time
             periodSeconds: 30
           readinessProbe:
             httpGet:
-              path: /health/deep
+              path: /api/v1/health/deep
               port: 5900
             initialDelaySeconds: 45
             periodSeconds: 10
@@ -76,11 +76,15 @@ spec:
       targetPort: 5900
 
 ---
-# Traefik strip-prefix middleware — Flask always sees clean paths
+# Traefik strip-prefix middleware — Flask always sees clean paths.
+# The middleware name is intentionally NOT prefixed with the namespace; Traefik
+# builds the cross-provider reference as <namespace>-<name>@kubernetescrd, so the
+# ingress annotation resolves to prod-pii-service-prefix@kubernetescrd. Naming
+# this 'prod-pii-service-prefix' would produce a doubled 'prod-prod-' reference.
 apiVersion: traefik.containo.us/v1alpha1
 kind: Middleware
 metadata:
-  name: prod-pii-service-prefix
+  name: pii-service-prefix
   namespace: prod
 spec:
   stripPrefix:
@@ -96,7 +100,7 @@ metadata:
   annotations:
     kubernetes.io/ingress.class: traefik
     cert-manager.io/cluster-issuer: prod-letsencrypt
-    traefik.ingress.kubernetes.io/router.middlewares: prod-prod-pii-service-prefix@kubernetescrd
+    traefik.ingress.kubernetes.io/router.middlewares: prod-pii-service-prefix@kubernetescrd
 spec:
   tls:
     - hosts:

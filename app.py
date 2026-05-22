@@ -6,12 +6,12 @@ Microsoft Presidio — no text leaves the machine or the cluster.
 
 Endpoints:
   GET  /ui                           - Browser dev console (disabled when API_KEY is set)
-  GET  /health                       - Liveness/readiness (K8s probes, no auth)
-  GET  /health/deep                  - Readiness with Presidio warm-up verification (no auth)
+  GET  /api/v1/health                - Liveness (K8s liveness probe, no auth)
+  GET  /api/v1/health/deep           - Readiness with dependency checks (K8s readiness probe, no auth)
   GET  /metrics                      - Prometheus-format telemetry scrape target (no auth)
   GET  /api/v1/entities              - All detectable entity types
   GET  /api/v1/policies              - Named policy catalog
-  GET  /api/v1/schemas               - Schema profiles (Banner, Colleague, Salesforce, Ethos, n8n)
+  GET  /api/v1/schemas               - Schema profiles (12 built-in ERP/SIS field maps)
   GET  /api/v1/stats                 - In-process telemetry (no raw PII)
   GET  /api/v1/keys                  - List active key names (never values)
   GET  /api/v1/jobs/<id>             - Async job status stub (501 — Redis/RQ deferred)
@@ -52,6 +52,7 @@ from pii_guard.auth import init_auth, require_api_key, is_auth_enabled, list_key
 from pii_guard import audit
 from pii_guard.policy import BUILT_IN_POLICIES, policy_engine
 from pii_guard.config import get_config, BUILT_IN_SCHEMA_PROFILES
+from utils.responses import error_response
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -139,14 +140,14 @@ def _preprocess_text(text: str) -> str:
 def ui():
     ui_flag = os.getenv("UI_ENABLED", "").lower()
     if ui_flag == "false":
-        return jsonify({"error": "UI disabled.", "code": "UI_DISABLED"}), 403
+        return error_response("UI disabled.", "UI_DISABLED", 403)
     if ui_flag != "true" and is_auth_enabled():
-        return jsonify({
-            "error": "Dev console is only available when API_KEY is unset (local development). "
-                     "Set UI_ENABLED=true to override.",
-            "code": "UI_DISABLED",
-        }), 403
-    return render_template("ui.html")
+        return error_response(
+            "Dev console is only available when API_KEY is unset (local development). "
+            "Set UI_ENABLED=true to override.",
+            "UI_DISABLED", 403,
+        )
+    return render_template("ui.html", sandbox_mode=_SANDBOX_MODE)
 
 
 @app.route("/openapi.yaml")
@@ -155,7 +156,7 @@ def openapi_yaml():
     import pathlib
     spec_path = pathlib.Path(__file__).parent / "openapi.yaml"
     if not spec_path.exists():
-        return jsonify({"error": "openapi.yaml not found"}), 404
+        return error_response("openapi.yaml not found", "SPEC_NOT_FOUND", 404)
     return spec_path.read_text(encoding="utf-8"), 200, {"Content-Type": "text/yaml; charset=utf-8"}
 
 
@@ -185,12 +186,16 @@ def _duration_ms() -> float:
     return (time.time() - g.get("request_start", time.time())) * 1000
 
 
-def error_response(message: str, code: str, status: int):
-    return jsonify({
-        "error": message,
-        "code": code,
-        "request_id": g.get("request_id", "unknown"),
-    }), status
+@app.after_request
+def add_mock_mode_header(response):
+    """
+    Mock/Live signal: tag every response with X-Mock-Mode when sandbox mode is
+    active so consumers can detect fabricated data without parsing the body.
+    The header is omitted entirely in live mode.
+    """
+    if _SANDBOX_MODE:
+        response.headers["X-Mock-Mode"] = "true"
+    return response
 
 
 def _parse_mode(mode_str: str):
@@ -205,56 +210,80 @@ def _parse_mode(mode_str: str):
 
 
 # ---------------------------------------------------------------------------
-# Health
+# GET /api/v1/health — liveness (polling-safe, no auth)
 # ---------------------------------------------------------------------------
 
-@app.route("/health")
+@app.route("/api/v1/health")
 def health():
+    """
+    Liveness probe. Returns 200 as long as the process is alive — no dependency
+    calls, no audit emission. Safe for K8s liveness and 30s monitoring cadence.
+    """
     return jsonify({
         "status": "ok",
         "service": SERVICE,
         "version": VERSION,
-        "uptime_seconds": round(time.time() - _START_TIME, 1),
+        "uptime_seconds": int(time.time() - _START_TIME),
     })
 
 
 # ---------------------------------------------------------------------------
-# GET /health/deep — Presidio warm-up verification (K8s readiness probe)
+# GET /api/v1/health/deep — readiness with dependency probes (K8s readiness)
 # ---------------------------------------------------------------------------
 
-@app.route("/health/deep")
+@app.route("/api/v1/health/deep")
 def health_deep():
     """
-    Verifies Presidio is actually loaded and functional. Runs a trivial scan.
-    K8s readiness probe: use this instead of /health so the pod only receives
-    traffic after the spaCy model has finished loading.
+    Readiness probe. Verifies critical dependencies before the pod receives
+    traffic. Intended for K8s readiness and admin diagnostics — not 30s polling.
 
-    Returns 503 if Presidio fails to initialize.
-    Returns 200 with status "degraded" if fallback spaCy model is in use.
+    Returns 200 when Presidio is ready, 200 with status "degraded" when the
+    fallback spaCy model is in use, and 503 when Presidio fails to initialize.
+    The "mock" key is the canonical live-vs-fabricated-data signal.
     """
-    guard = get_guard()
-    try:
-        guard._ensure_initialized()
-        # Run a trivial scan to confirm the analyzer pipeline is live
-        guard.scan("test probe text")
-        degraded = getattr(guard, "_degraded", False)
-        return jsonify({
-            "status": "degraded" if degraded else "ok",
-            "presidio": "ready",
-            "spacy_degraded": degraded,
-            "service": SERVICE,
-            "version": VERSION,
-            "uptime_seconds": round(time.time() - _START_TIME, 1),
-        }), 200
-    except Exception as exc:
-        logger.error("Health deep check failed: %s", exc)
-        return jsonify({
-            "status": "failed",
-            "presidio": "failed",
-            "error": "Presidio initialization failed — check spaCy model installation",
-            "service": SERVICE,
-            "version": VERSION,
-        }), 503
+    checks: dict = {}
+    status = "ok"
+    http_status = 200
+
+    if _SANDBOX_MODE:
+        # Sandbox mode is an explicit operator choice — Presidio is never loaded.
+        checks["presidio"] = {
+            "status": "skipped",
+            "detail": "sandbox mode active — responses are fabricated, Presidio not loaded",
+        }
+    else:
+        guard = get_guard()
+        probe_start = time.time()
+        try:
+            guard._ensure_initialized()
+            guard.scan("test probe text")  # confirm the analyzer pipeline is live
+            latency_ms = int((time.time() - probe_start) * 1000)
+            checks["presidio"] = {"status": "ok", "latency_ms": latency_ms}
+            if getattr(guard, "_degraded", False):
+                checks["spacy_model"] = {
+                    "status": "degraded",
+                    "detail": "fallback model en_core_web_sm in use — reduced PERSON/LOCATION accuracy",
+                }
+                status = "degraded"
+            else:
+                checks["spacy_model"] = {"status": "ok", "detail": "en_core_web_lg"}
+        except Exception as exc:
+            logger.error("Health deep check failed: %s", exc)
+            checks["presidio"] = {
+                "status": "down",
+                "detail": "Presidio initialization failed — check spaCy model installation",
+            }
+            status = "failed"
+            http_status = 503
+
+    return jsonify({
+        "status": status,
+        "service": SERVICE,
+        "version": VERSION,
+        "uptime_seconds": int(time.time() - _START_TIME),
+        "mock": _SANDBOX_MODE,
+        "checks": checks,
+    }), http_status
 
 
 # ---------------------------------------------------------------------------
@@ -1118,8 +1147,10 @@ def list_schemas():
     Specifying a profile in /api/v1/process or /api/v1/sanitize/structured gives
     field-name-aware detection so field names like 'SPBPERS_SSN' are recognized as US_SSN.
 
-    Available built-ins: banner_student, colleague_person, salesforce_contact,
-                         ethos_person, n8n_generic, conductor_ethos
+    Available built-ins (12): banner_student, colleague_person, salesforce_contact,
+                         ethos_person, n8n_generic, conductor_ethos, workday_hr,
+                         servicenow_itsm, slate_crm, starfish_early_alert,
+                         canvas_lms, microsoft_graph.
     Custom profiles are loaded from PII_CONFIG_FILE.
     """
     cfg = get_config()
@@ -2191,7 +2222,7 @@ def _process_xlsx(guard, content: bytes, columns: list, mode, exclude_types, inc
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 5006))
-    debug = os.getenv("FLASK_ENV", "development") == "development"
+    port = int(os.getenv("PORT", 5900))
+    debug = os.getenv("FLASK_ENV", "production") == "development"
     logger.info("Starting %s v%s on port %d", SERVICE, VERSION, port)
     app.run(host="0.0.0.0", port=port, use_reloader=False, debug=debug)

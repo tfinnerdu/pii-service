@@ -44,10 +44,10 @@ def auth_client():
 
 class TestHealthEndpoint:
     def test_health_200(self, client):
-        assert client.get("/health").status_code == 200
+        assert client.get("/api/v1/health").status_code == 200
 
     def test_health_status_ok(self, client):
-        assert client.get("/health").get_json()["status"] == "ok"
+        assert client.get("/api/v1/health").get_json()["status"] == "ok"
 
 
 # ---------------------------------------------------------------------------
@@ -360,7 +360,7 @@ class TestAuthEnforcement:
 
     def test_health_does_not_require_auth(self, auth_client):
         """Health endpoint must be accessible without auth for K8s probes."""
-        resp = auth_client.get("/health")
+        resp = auth_client.get("/api/v1/health")
         assert resp.status_code == 200, (
-            "/health must not require authentication — K8s liveness probes cannot send API keys"
+            "/api/v1/health must not require authentication — K8s liveness probes cannot send API keys"
         )

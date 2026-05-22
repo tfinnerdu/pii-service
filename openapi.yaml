@@ -148,10 +148,12 @@ components:
 # ---------------------------------------------------------------------------
 paths:
 
-  /health:
+  /api/v1/health:
     get:
       summary: Liveness probe
-      description: No auth required. K8s liveness probe target.
+      description: >
+        No auth required. K8s liveness probe target. Polling-safe — no dependency
+        calls, no audit emission.
       security: []
       tags: [Health]
       responses:
@@ -161,38 +163,49 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [status, service, version, uptime_seconds]
                 properties:
                   status:         { type: string, example: ok }
                   service:        { type: string, example: pii-service }
                   version:        { type: string, example: "1.0.0" }
-                  uptime_seconds: { type: number }
+                  uptime_seconds: { type: integer, description: "Integer seconds since process start" }
 
-  /health/deep:
+  /api/v1/health/deep:
     get:
-      summary: Readiness probe — verifies Presidio is loaded
+      summary: Readiness probe — dependency checks
       description: >
-        Runs a trivial Presidio scan to confirm the ML pipeline is warm.
-        Use this as the K8s readiness probe (not /health).
-        Returns 200 even in degraded mode (smaller spaCy model). Returns 503 if Presidio fails.
-        No auth required.
+        Probes critical dependencies (Presidio + spaCy model). Use this as the
+        K8s readiness probe (not /api/v1/health). Returns 200 when ready, 200 with
+        status "degraded" when the fallback spaCy model is in use, and 503 when
+        Presidio fails to initialize. The "mock" key is the canonical signal for
+        whether the service is on live or fabricated data. No auth required.
       security: []
       tags: [Health]
       responses:
         "200":
-          description: Presidio is ready (status may be "degraded" if fallback model is in use)
+          description: Dependencies ready (status may be "degraded" if fallback model is in use)
           content:
             application/json:
               schema:
                 type: object
+                required: [status, service, version, uptime_seconds, mock, checks]
                 properties:
                   status:         { type: string, enum: [ok, degraded] }
-                  presidio:       { type: string, example: ready }
-                  spacy_degraded: { type: boolean }
                   service:        { type: string }
                   version:        { type: string }
-                  uptime_seconds: { type: number }
+                  uptime_seconds: { type: integer }
+                  mock:           { type: boolean, description: "true when PII_SANDBOX_MODE is active" }
+                  checks:
+                    type: object
+                    description: Per-dependency status and latency
+                    additionalProperties:
+                      type: object
+                      properties:
+                        status:     { type: string, enum: [ok, degraded, down, skipped] }
+                        latency_ms: { type: integer }
+                        detail:     { type: string }
         "503":
-          description: Presidio failed to initialize
+          description: A critical dependency is down (Presidio failed to initialize)
 
   /metrics:
     get:

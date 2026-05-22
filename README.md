@@ -32,7 +32,7 @@ python -m spacy download en_core_web_lg
 # or: python app.py
 ```
 
-Service starts on **port 5900** by default. Visit `http://localhost:5900/health` to verify.
+Service starts on **port 5900** by default. Visit `http://localhost:5900/api/v1/health` to verify.
 
 ---
 
@@ -40,8 +40,8 @@ Service starts on **port 5900** by default. Visit `http://localhost:5900/health`
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/health` | Liveness — no auth required (K8s liveness probe) |
-| GET | `/health/deep` | Readiness with Presidio verification — no auth (K8s readiness probe) |
+| GET | `/api/v1/health` | Liveness — no auth required (K8s liveness probe) |
+| GET | `/api/v1/health/deep` | Readiness with dependency checks — no auth (K8s readiness probe) |
 | GET | `/metrics` | Prometheus text format telemetry — no auth |
 | GET | `/api/v1/entities` | All detectable entity types |
 | GET | `/api/v1/policies` | Named policy catalog |
@@ -64,7 +64,7 @@ Service starts on **port 5900** by default. Visit `http://localhost:5900/health`
 | POST | `/api/v1/explain` | Per-hit detection breakdown (pattern, recognizer, context, score) |
 | POST | `/api/v1/keys/generate` | Generate a cryptographically secure named API key (shown once) |
 
-All endpoints except `/health`, `/health/deep`, and `/metrics` require `Authorization: Bearer <key>` or `X-API-Key: <key>` when `API_KEY` or `API_KEYS` is set.
+All endpoints except `/api/v1/health`, `/api/v1/health/deep`, and `/metrics` require `Authorization: Bearer <key>` or `X-API-Key: <key>` when `API_KEY` or `API_KEYS` is set.
 
 ---
 
@@ -223,7 +223,7 @@ curl -X POST http://localhost:5900/api/v1/config/reload -H "X-API-Key: $API_KEY"
 | `MAX_TEXT_LENGTH` | `100000` | Max characters per text input |
 | `PII_CONFIG_FILE` | *(empty)* | Path to JSON config for custom patterns/thresholds |
 | `PSEUDO_SECRET` | *(empty)* | HMAC-SHA256 seed for pseudonymization — prevents reversal attacks. Generate: `python -c "import secrets; print(secrets.token_hex(32))"` |
-| `PII_SANDBOX_MODE` | `false` | Return deterministic fake responses without Presidio — for CI/integration testing |
+| `PII_SANDBOX_MODE` | `false` | Return deterministic fake responses without Presidio — for CI/integration testing. When active it is signalled by the `X-Mock-Mode: true` response header, `"mock": true` in `/api/v1/health/deep`, and a `MOCK` badge in `/ui` |
 | `PII_DECODE_ENCODED` | `false` | Decode URL-encoded or base64-encoded text before scanning |
 
 ---

@@ -16,11 +16,13 @@ All automated tests run via:
 
 1. Run: `.\start-local.ps1`
 2. Expected: console shows port 5900 and endpoint list. No errors.
-3. Open browser: `http://localhost:5900/health`
-4. Expected response: `{"status":"ok","service":"pii-service","version":"1.0.0","uptime_seconds":...}`
+3. Open browser: `http://localhost:5900/api/v1/health`
+4. Expected response: `{"status":"ok","service":"pii-service","version":"1.0.0","uptime_seconds":N}`
+   where `uptime_seconds` is an integer.
 5. Key: `service` must be `"pii-service"` — not `"pii-guard"`.
+6. The bare `/health` path is retired — it returns 404. Only `/api/v1/health` resolves.
 
-**Last verified:** 2025-05 (initial release)
+**Last verified:** 2025-05 (initial release); health path versioned 2026-05-21
 
 ---
 
@@ -84,12 +86,17 @@ GPA (non-string) should pass through unchanged.
 ### §2.7 Deep health check
 
 ```
-GET http://localhost:5900/health/deep
+GET http://localhost:5900/api/v1/health/deep
 ```
 
-Expected: `{"status":"ok","presidio":"ready","spacy_degraded":false,...}` after warm-up.
-If spaCy en_core_web_lg is missing and en_core_web_sm loaded instead: `"status":"degraded","spacy_degraded":true`.
-If Presidio fails entirely: 503.
+Expected after warm-up: 200 with
+`{"status":"ok","service":"pii-service","version":"1.0.0","uptime_seconds":N,"mock":false,"checks":{...}}`.
+The `checks` object carries per-dependency status — `checks.presidio.status` is `"ok"` with a
+`latency_ms`, and `checks.spacy_model.status` is `"ok"` for `en_core_web_lg`.
+If `en_core_web_sm` loaded instead: top-level `"status":"degraded"` and
+`checks.spacy_model.status":"degraded"`.
+If Presidio fails entirely: 503 with `checks.presidio.status":"down"`.
+In sandbox mode: `"mock":true` and `checks.presidio.status":"skipped"`.
 
 ### §2.8b Prometheus metrics
 
@@ -257,8 +264,12 @@ Expected: preflight examples run, showing safe/unsafe results and recommendation
 1. Apply manifests: `kubectl apply -f k8s/deployment.yaml`
 2. Check pods: `kubectl get pods -n prod -l app=pii-service`
 3. Wait for Running state (allow 60s for spaCy model load)
-4. Probe: `curl https://du-int.doane.edu/prod/pii-service/health`
+4. Probe: `curl https://du-int.doane.edu/prod/pii-service/api/v1/health`
 5. Expected: same health JSON as local
+6. Verify the Traefik middleware resolved: the Ingress annotation
+   `router.middlewares` must read `prod-pii-service-prefix@kubernetescrd` (single
+   `prod-`). A doubled `prod-prod-` means the middleware did not resolve and
+   stripPrefix is not applied — routes will 404.
 
 ---
 
@@ -269,7 +280,7 @@ Expected: preflight examples run, showing safe/unsafe results and recommendation
 1. Call `/api/v1/scan` without a key: expect 401
 2. Call with wrong key: expect 403
 3. Call with correct key in `Authorization: Bearer <key>`: expect 200
-4. Verify `/health`, `/health/deep`, `/metrics` return 200 without any key (K8s probes must work without auth)
+4. Verify `/api/v1/health`, `/api/v1/health/deep`, `/metrics` return 200 without any key (K8s probes must work without auth)
 
 ### §8.2 Named multi-key (API_KEYS)
 
@@ -339,3 +350,46 @@ Expected: `correlation_id` key is absent from response (not null — completely 
 4. Verify `caller_name: "ocr-service"` in pii-service audit log
 
 **Last verified:** TBD (verify after OCR service wiring is complete)
+
+---
+
+## §10 Dev Console (/ui) Walkthrough
+
+**Preconditions:** service running locally with `API_KEY` unset (auth disabled).
+
+1. Open `http://localhost:5900/ui`.
+2. Expected: the dark-themed dev console loads with six tabs — Scan & Sanitize,
+   Explain, Policy, File Upload, Record / Schema, Rules.
+3. Header check: a green **LIVE** badge appears next to "API Docs". The health
+   dot turns green ("Presidio ready") within ~30s of warm-up.
+4. **Scan & Sanitize:** paste `Student D1234567, SSN 123-45-6789, jsmith@doane.edu`,
+   click *Scan & Sanitize*. Expected: original text with highlighted hits, a
+   sanitized panel, and a hit-details table.
+5. **Explain:** paste the same text. Expected: per-hit recognizer + pattern breakdown.
+6. **Policy:** pick `ferpa_strict`, run on any text with PII. Expected: EXCLUDED panel.
+7. **File Upload:** drag a small CSV. Expected: per-row results table.
+8. **Record / Schema:** paste a JSON record, pick `banner_student`. Expected:
+   original vs sanitized diff.
+9. **Rules:** switch to the tab. Expected: policies, custom recognizers, and
+   Presidio built-ins render.
+
+**Last verified:** 2026-05-21 (contract-pinned by `TestUiContract` / `TestSwaggerContract`)
+
+---
+
+## §11 Mock/Live Signal Verification
+
+Mock mode must never be silent. With `PII_SANDBOX_MODE=true` in `.env`, verify all
+three signals:
+
+1. **UI badge:** open `/ui`. The header badge reads **MOCK** in amber (not LIVE).
+2. **Response header:** `curl -i http://localhost:5900/api/v1/health` — the
+   response carries `X-Mock-Mode: true`. Hit any `/api/v1/*` endpoint and confirm
+   the same header is present.
+3. **Health body:** `GET /api/v1/health/deep` returns `"mock": true` and
+   `checks.presidio.status: "skipped"`.
+
+Set `PII_SANDBOX_MODE=false` and confirm: badge flips to green **LIVE**, the
+`X-Mock-Mode` header is absent, and `/api/v1/health/deep` reports `"mock": false`.
+
+**Last verified:** 2026-05-21 (contract-pinned by `TestMockSignalContract`)

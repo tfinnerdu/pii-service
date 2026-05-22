@@ -18,13 +18,36 @@ import json
 import logging
 import threading
 import time
+import uuid
 from collections import defaultdict
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass, field, asdict
+from datetime import datetime, timezone
+from typing import Any, Optional
 
 logger = logging.getLogger("pii_guard.audit")
 
 _lock = threading.Lock()
+
+
+# ---------------------------------------------------------------------------
+# Canonical audit event shape
+# ---------------------------------------------------------------------------
+#
+# The frozen dataclass — not an inline dict — is the Doane standard so a future
+# migration to a shared `doane-audit` library is a find-replace, not a rewrite.
+
+@dataclass(frozen=True)
+class AuditEvent:
+    action: str                     # verb: "scan", "sanitize", "preflight", ...
+    actor: str                      # named API key caller, or "system"
+    resource_type: str              # "pii_text" | "pii_batch"
+    resource_id: str                # data subject id, or the request id
+    outcome: str                    # "success" | "failure" | "partial"
+    detail: dict[str, Any] = field(default_factory=dict)
+    correlation_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    occurred_at: str = field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
 
 # ---------------------------------------------------------------------------
 # In-memory stats (reset on restart)
@@ -55,7 +78,7 @@ def get_stats() -> dict:
             "mode_counts": dict(_stats["mode_counts"]),
             "risk_level_counts": dict(_stats["risk_level_counts"]),
             "endpoint_counts": dict(_stats["endpoint_counts"]),
-            "uptime_seconds": round(time.time() - _stats["process_start"], 1),
+            "uptime_seconds": int(time.time() - _stats["process_start"]),
         }
 
 
@@ -91,37 +114,47 @@ def log_event(
     batch_size: int = 1,
     duration_ms: float,
     action: str,                        # "scan" | "sanitize" | "exclude" | "reject" | "preflight"
+    outcome: str = "success",           # "success" | "failure" | "partial"
     policy_name: Optional[str] = None,
     subject_id: Optional[str] = None,   # CCPA: data subject identifier (hashed by caller)
     destination: Optional[str] = None,  # HIPAA: destination system or caller-context label
     caller_name: Optional[str] = None,  # named key identifier from API_KEYS (e.g. "n8n-prod")
     correlation_id: Optional[str] = None,  # caller-supplied opaque ID for record linkage
-) -> None:
+) -> AuditEvent:
     """
     Emit one structured audit event per request (never one per fan-out item).
-    Accumulates into in-memory stats.
+    Builds the canonical frozen AuditEvent, logs it as JSON, accumulates stats,
+    and returns the event. PII-domain fields live under `detail`.
     """
-    event = {
-        "audit": True,
-        "endpoint": endpoint,
-        "request_id": request_id,
-        "client_ip": client_ip,
-        "api_key_prefix": api_key_prefix,
-        "caller_name": caller_name,
-        "mode": mode,
-        "action": action,
-        "batch_size": batch_size,
-        "hit_count": hit_count,
-        "excluded_count": excluded_count,
-        "entity_types": entity_types,
-        "risk_level": risk_level,
-        "duration_ms": round(duration_ms, 2),
-        "policy": policy_name,
-        "subject_id": subject_id,
-        "destination": destination,
-        "correlation_id": correlation_id,
-    }
-    logger.info(json.dumps(event))
+    event_kwargs: dict[str, Any] = dict(
+        action=action,
+        actor=caller_name or "system",
+        resource_type="pii_batch" if batch_size > 1 else "pii_text",
+        resource_id=subject_id or request_id,
+        outcome=outcome,
+        detail={
+            "endpoint": endpoint,
+            "request_id": request_id,
+            "client_ip": client_ip,
+            "api_key_prefix": api_key_prefix,
+            "mode": mode,
+            "batch_size": batch_size,
+            "hit_count": hit_count,
+            "excluded_count": excluded_count,
+            "entity_types": entity_types,
+            "risk_level": risk_level,
+            "duration_ms": round(duration_ms, 2),
+            "policy": policy_name,
+            "destination": destination,
+        },
+    )
+    # An explicit correlation_id threads through; otherwise the dataclass
+    # default_factory mints a fresh uuid for this logical operation.
+    if correlation_id:
+        event_kwargs["correlation_id"] = correlation_id
+
+    event = AuditEvent(**event_kwargs)
+    logger.info(json.dumps({"audit": True, **asdict(event)}))
 
     with _lock:
         _stats["total_requests"] += 1
@@ -135,3 +168,5 @@ def log_event(
             _stats["mode_counts"][mode] += 1
         _stats["risk_level_counts"][risk_level] += 1
         _stats["endpoint_counts"][endpoint] += 1
+
+    return event

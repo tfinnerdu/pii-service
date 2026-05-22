@@ -2,11 +2,14 @@
 tests/unit/test_audit.py - Unit tests for the audit logging module.
 """
 
+import dataclasses
+
 import pytest
 from pii_guard import audit
+from pii_guard.audit import AuditEvent
 
 
-def _emit(overrides: dict = None):
+def _emit(overrides: dict = None) -> AuditEvent:
     base = {
         "endpoint": "/api/v1/scan",
         "request_id": "test-req-1",
@@ -22,7 +25,7 @@ def _emit(overrides: dict = None):
     }
     if overrides:
         base.update(overrides)
-    audit.log_event(**base)
+    return audit.log_event(**base)
 
 
 class TestAuditStats:
@@ -67,8 +70,14 @@ class TestAuditStats:
         stats["total_requests"] = 99999
         assert audit.get_stats()["total_requests"] == original_count
 
-    def test_uptime_seconds_positive(self):
-        assert audit.get_stats()["uptime_seconds"] > 0
+    def test_uptime_seconds_is_non_negative_int(self):
+        """
+        uptime_seconds is an integer count of seconds. It is legitimately 0
+        during the first second of process life — assert >= 0, not > 0.
+        """
+        uptime = audit.get_stats()["uptime_seconds"]
+        assert isinstance(uptime, int) and not isinstance(uptime, bool)
+        assert uptime >= 0
 
     def test_emit_with_policy_name(self):
         before = audit.get_stats()["total_requests"]
@@ -103,3 +112,73 @@ class TestAuditStats:
         before = audit.get_stats()["total_requests"]
         _emit({"correlation_id": None})
         assert audit.get_stats()["total_requests"] == before + 1
+
+
+class TestAuditEvent:
+    """
+    The canonical frozen AuditEvent shape. log_event builds one per request.
+    The frozen dataclass — not an inline dict — is the standard so the audit
+    trail migrates to a shared doane-audit library as a find-replace.
+    """
+
+    CANONICAL_FIELDS = {
+        "action", "actor", "resource_type", "resource_id",
+        "outcome", "detail", "correlation_id", "occurred_at",
+    }
+
+    def test_event_has_canonical_fields(self):
+        names = {f.name for f in dataclasses.fields(AuditEvent)}
+        assert names == self.CANONICAL_FIELDS, (
+            f"AuditEvent fields drifted from the canonical shape. Got {names}."
+        )
+
+    def test_event_is_frozen(self):
+        ev = _emit()
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            ev.action = "tampered"
+
+    def test_log_event_returns_audit_event(self):
+        assert isinstance(_emit(), AuditEvent)
+
+    def test_actor_from_caller_name(self):
+        assert _emit({"caller_name": "n8n-prod"}).actor == "n8n-prod"
+
+    def test_actor_defaults_to_system(self):
+        assert _emit({"caller_name": None}).actor == "system"
+
+    def test_resource_type_is_text_for_single(self):
+        assert _emit().resource_type == "pii_text"
+
+    def test_resource_type_is_batch_for_batch(self):
+        assert _emit({"batch_size": 50}).resource_type == "pii_batch"
+
+    def test_resource_id_prefers_subject_id(self):
+        assert _emit({"subject_id": "hashed-pidm-abc"}).resource_id == "hashed-pidm-abc"
+
+    def test_resource_id_falls_back_to_request_id(self):
+        assert _emit().resource_id == "test-req-1"
+
+    def test_outcome_defaults_to_success(self):
+        assert _emit().outcome == "success"
+
+    def test_outcome_is_overridable(self):
+        assert _emit({"outcome": "partial"}).outcome == "partial"
+
+    def test_explicit_correlation_id_is_threaded(self):
+        assert _emit({"correlation_id": "banner-pidm-1234567"}).correlation_id == "banner-pidm-1234567"
+
+    def test_correlation_id_auto_generated_when_absent(self):
+        """Absent correlation_id mints a fresh non-empty uuid via the default factory."""
+        ev = _emit({"correlation_id": None})
+        assert isinstance(ev.correlation_id, str) and len(ev.correlation_id) >= 16
+
+    def test_occurred_at_is_iso_timestamp(self):
+        from datetime import datetime
+        # datetime.fromisoformat must parse it — raises if the shape is wrong.
+        datetime.fromisoformat(_emit().occurred_at)
+
+    def test_detail_carries_pii_domain_fields(self):
+        detail = _emit().detail
+        for key in ("endpoint", "hit_count", "entity_types", "risk_level", "duration_ms"):
+            assert key in detail, f"AuditEvent.detail missing '{key}'"
+        assert detail["endpoint"] == "/api/v1/scan"

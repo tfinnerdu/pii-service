@@ -33,10 +33,10 @@ machine or the cluster.
 
 | Environment | URL |
 |---|---|
-| Local development | `http://localhost:5006/ui` |
-| Network (same LAN) | `http://<your-ip>:5006/ui` |
-| API docs (Swagger) | `http://localhost:5006/swagger` |
-| Health check | `http://localhost:5006/health` |
+| Local development | `http://localhost:5900/ui` |
+| Network (same LAN) | `http://<your-ip>:5900/ui` |
+| API docs (Swagger) | `http://localhost:5900/swagger` |
+| Health check | `http://localhost:5900/api/v1/health` |
 
 The dev console (`/ui`) is automatically available when no API key is configured
 (local development). In production, set `UI_ENABLED=true` in your `.env` to force-enable
@@ -664,8 +664,8 @@ for direct integration.
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/health` | Liveness check (no auth, safe for K8s probes) |
-| GET | `/health/deep` | Readiness check — verifies Presidio is initialized |
+| GET | `/api/v1/health` | Liveness check (no auth, safe for K8s probes) |
+| GET | `/api/v1/health/deep` | Readiness check — verifies Presidio + dependency status |
 | GET | `/metrics` | Prometheus scrape endpoint |
 | GET | `/api/v1/entities` | All detectable entity types |
 | GET | `/api/v1/policies` | Named policy catalog |
@@ -747,7 +747,7 @@ Full request/response schemas are in the Swagger UI at `/swagger`.
 **Local development:** Authentication is disabled by default when `API_KEY` is not set
 in `.env`. The dev console and all API endpoints are open.
 
-**Production:** All API endpoints (except `/health`, `/health/deep`, and `/metrics`)
+**Production:** All API endpoints (except `/api/v1/health`, `/api/v1/health/deep`, and `/metrics`)
 require an API key sent as:
 ```
 Authorization: Bearer <key>

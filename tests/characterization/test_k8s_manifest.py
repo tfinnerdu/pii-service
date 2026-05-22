@@ -79,28 +79,33 @@ class TestDeploymentManifest:
         )
 
     def test_liveness_probe_path_is_health(self, deployment_doc):
+        """
+        Known-good: liveness probe uses /api/v1/health (versioned).
+        Changed 2026-05-21: bare /health deprecated per ADR-0002.
+        """
         containers = deployment_doc["spec"]["template"]["spec"]["containers"]
         for container in containers:
             probe = container.get("livenessProbe", {})
             http = probe.get("httpGet", {})
-            assert http.get("path") == "/health", (
-                f"Liveness probe path is '{http.get('path')}', expected '/health'. "
-                "K8s will restart the pod if /health doesn't return 200."
+            assert http.get("path") == "/api/v1/health", (
+                f"Liveness probe path is '{http.get('path')}', expected '/api/v1/health'. "
+                "K8s will restart the pod if the probe path 404s."
             )
 
     def test_readiness_probe_path_is_health_deep(self, deployment_doc):
         """
-        Known-good: readiness probe uses /health/deep not /health.
-        /health/deep verifies Presidio is actually loaded before sending traffic.
-        /health returns 200 immediately before spaCy finishes loading.
+        Known-good: readiness probe uses /api/v1/health/deep not /api/v1/health.
+        /api/v1/health/deep verifies Presidio is actually loaded before sending
+        traffic. Liveness returns 200 immediately before spaCy finishes loading.
+        Changed 2026-05-21: bare /health/deep deprecated per ADR-0002.
         """
         containers = deployment_doc["spec"]["template"]["spec"]["containers"]
         for container in containers:
             probe = container.get("readinessProbe", {})
             http = probe.get("httpGet", {})
-            assert http.get("path") == "/health/deep", (
-                f"Readiness probe path is '{http.get('path')}', expected '/health/deep'. "
-                "Using /health for readiness sends traffic to a pod before Presidio loads."
+            assert http.get("path") == "/api/v1/health/deep", (
+                f"Readiness probe path is '{http.get('path')}', expected '/api/v1/health/deep'. "
+                "Using liveness for readiness sends traffic to a pod before Presidio loads."
             )
 
     def test_secret_key_ref_indentation(self, deployment_doc):
@@ -170,7 +175,11 @@ class TestIngressManifest:
 # ---------------------------------------------------------------------------
 
 class TestMiddlewareManifest:
-    EXPECTED_MIDDLEWARE_NAME = "prod-pii-service-prefix"
+    # Changed 2026-05-21: the middleware metadata.name must NOT be namespace-
+    # prefixed. Traefik builds the cross-provider reference as
+    # <namespace>-<name>@kubernetescrd, so naming it 'prod-pii-service-prefix'
+    # yields the doubled 'prod-prod-' reference that does not resolve.
+    EXPECTED_MIDDLEWARE_NAME = "pii-service-prefix"
     EXPECTED_STRIP_PREFIX    = "/prod/pii-service"
 
     def test_middleware_exists(self, middleware_doc):
@@ -188,4 +197,28 @@ class TestMiddlewareManifest:
         assert self.EXPECTED_STRIP_PREFIX in prefixes, (
             f"stripPrefix does not include '{self.EXPECTED_STRIP_PREFIX}'. "
             "Flask routes at root level (/) only work because Traefik strips this prefix."
+        )
+
+    def test_ingress_annotation_references_middleware_correctly(self, ingress_doc, middleware_doc):
+        """
+        Footgun: the Traefik middleware reference is built as
+        <namespace>-<middleware-name>@kubernetescrd. A doubled 'prod-prod-'
+        prefix does not resolve and the ingress silently fails. Pin the exact
+        reference and cross-check it against the actual middleware name.
+        """
+        ns = middleware_doc["metadata"]["namespace"]
+        name = middleware_doc["metadata"]["name"]
+        expected_ref = f"{ns}-{name}@kubernetescrd"
+
+        annotations = ingress_doc["metadata"].get("annotations", {})
+        ref = annotations.get("traefik.ingress.kubernetes.io/router.middlewares", "")
+        assert ref == expected_ref, (
+            f"Ingress middleware reference is '{ref}', expected '{expected_ref}'. "
+            "Traefik resolves <namespace>-<name>@kubernetescrd — the annotation and "
+            "the Middleware metadata.name must stay in sync."
+        )
+        assert "prod-prod-" not in ref, (
+            f"Doubled 'prod-prod-' in middleware reference '{ref}'. This does not "
+            "resolve and the ingress silently fails. The Middleware name must not "
+            "be namespace-prefixed."
         )

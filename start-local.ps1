@@ -83,13 +83,13 @@ $Branch = (git -C $Root rev-parse --abbrev-ref HEAD 2>$null)
 $Commit = (git -C $Root rev-parse --short HEAD 2>$null)
 $GitInfo = if ($Branch -and $Commit) { "$Branch @ $Commit" } else { 'unknown' }
 
-$Port = if ($env:PORT) { $env:PORT } else { '5006' }
+$Port = if ($env:PORT) { $env:PORT } else { '5900' }
 Write-Host "---"
 Write-Host "pii-service v1.0.0"
 Write-Host "  Port:    $Port"
 Write-Host "  Branch:  $GitInfo"
-Write-Host "  Local:   http://localhost:${Port}/health"
-if ($IP) { Write-Host "  Network: http://${IP}:${Port}/health" }
+Write-Host "  Local:   http://localhost:${Port}/api/v1/health"
+if ($IP) { Write-Host "  Network: http://${IP}:${Port}/api/v1/health" }
 Write-Host "  Docs:    https://github.com/tfinnerdu/pii-service"
 Write-Host "---"
 Write-Host "Endpoints:"
@@ -103,6 +103,12 @@ Write-Host "  GET  /api/v1/policies          - List named policies"
 Write-Host "  GET  /api/v1/recognizers       - Recognizer pattern specs"
 Write-Host "  GET  /api/v1/stats             - Service telemetry"
 Write-Host "---"
+
+# Unset Werkzeug reloader state before spawning Python. If inherited from a
+# parent Flask process, the child sees a socket FD that does not exist and dies
+# with OSError WinError 10038. Belt-and-suspenders for runs outside the hub.
+Remove-Item Env:WERKZEUG_RUN_MAIN  -ErrorAction SilentlyContinue
+Remove-Item Env:WERKZEUG_SERVER_FD -ErrorAction SilentlyContinue
 
 # Continue so Python's stderr logging doesn't trip PowerShell's error handler
 $ErrorActionPreference = 'Continue'
