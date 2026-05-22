@@ -16,6 +16,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 		TESTING.md = TESTING.md
 		docs\bashCommands.txt = docs\bashCommands.txt
 		docs\coverage-accountability.md = docs\coverage-accountability.md
+		docs\productization-notes.md = docs\productization-notes.md
 		docs\user-guide.md = docs\user-guide.md
 		k8s\deployment.yaml = k8s\deployment.yaml
 		workflows\pii_scan_and_sanitize.json = workflows\pii_scan_and_sanitize.json

@@ -67,6 +67,7 @@
     <Content Include="n8n\pii_service_workflow.json" />
     <Content Include="docs\bashCommands.txt" />
     <Content Include="docs\coverage-accountability.md" />
+    <Content Include="docs\productization-notes.md" />
     <Content Include="docs\user-guide.md" />
     <Content Include="TESTING.md" />
     <Content Include="README.md" />
