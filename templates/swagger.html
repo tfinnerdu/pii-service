@@ -6,20 +6,97 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
   <style>
-    body { margin: 0; background: #fafafa; }
-    .swagger-ui .topbar { background: #1a1d27; }
-    .swagger-ui .topbar .download-url-wrapper { display: none; }
-    .swagger-ui .topbar-wrapper img { content: none; }
-    .swagger-ui .topbar-wrapper::before {
-      content: "pii-service — API Docs";
-      color: #818cf8;
-      font-weight: 700;
-      font-size: 1rem;
-      padding-left: 16px;
+    /* Doane theme for Swagger UI — see swaggercss.md. Orange + grayscale +
+       a single link-blue, no navy. Per-method block colors are left as
+       Swagger's defaults (GET/POST/... coloring is a usability convention). */
+    :root {
+      --doane-orange:      #FF7900;
+      --doane-orange-dark: #D86600;
+      --doane-ink:         #161C21;
+      --doane-slate:       #47545D;
+      --doane-muted:       #67737A;
+      --doane-page:        #F4F5F5;
+      --doane-border:      #C4C8C9;
+      --doane-link:        #0063B0;
+    }
+
+    body { margin: 0; background: var(--doane-page); }
+
+    /* ── Custom Doane header ── */
+    .doane-bar {
+      display: flex; align-items: center; gap: 16px;
+      background: var(--doane-ink);
+      border-bottom: 3px solid var(--doane-orange);
+      padding: 0 20px; height: 52px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    .doane-bar h1 {
+      color: var(--doane-orange);
+      font-size: 15px; font-weight: 700; letter-spacing: .02em; margin: 0;
+    }
+    .doane-bar h1 span { color: rgba(255,255,255,.7); font-weight: 500; }
+    .doane-bar-link {
+      margin-left: auto; color: #fff; text-decoration: none; font-size: 13px;
+      border: 1px solid rgba(255,255,255,.3); border-radius: 6px;
+      padding: 5px 12px; transition: background .15s, border-color .15s;
+    }
+    .doane-bar-link:hover { background: var(--doane-orange); border-color: var(--doane-orange); }
+
+    /* Swagger's own topbar is just a spec-URL input — hide it. */
+    #swagger-ui .topbar { display: none; }
+
+    /* ── Swagger UI — Doane theme overrides ── */
+    .swagger-ui .info { margin: 24px 0; }
+    .swagger-ui .info .title { color: var(--doane-slate); }
+    .swagger-ui .info a,
+    .swagger-ui a { color: var(--doane-link); }
+
+    .swagger-ui .opblock-tag { color: var(--doane-slate); border-bottom: 1px solid var(--doane-border); }
+    .swagger-ui .opblock-tag small { color: var(--doane-muted); }
+
+    .swagger-ui .btn.execute {
+      background-color: var(--doane-orange);
+      border-color: var(--doane-orange);
+      color: #fff;
+    }
+    .swagger-ui .btn.execute:hover {
+      background-color: var(--doane-orange-dark);
+      border-color: var(--doane-orange-dark);
+    }
+
+    .swagger-ui .btn.authorize { color: var(--doane-slate); border-color: var(--doane-slate); }
+    .swagger-ui .btn.authorize svg { fill: var(--doane-slate); }
+    .swagger-ui .btn { border-radius: 6px; }
+
+    /* Servers bar — blend into the grey page, not a white stripe. */
+    .swagger-ui .scheme-container {
+      background: transparent !important;
+      box-shadow: none !important;
+      border: none;
+      border-bottom: 1px solid var(--doane-border);
+      margin: 0;
+      padding: 16px 0;
+    }
+    .swagger-ui .servers-title { color: var(--doane-slate); }
+    .swagger-ui select,
+    .swagger-ui .servers select {
+      border: 1px solid var(--doane-border) !important;
+      border-radius: 6px !important;
+      box-shadow: none !important;
+      background-color: #fff;
+    }
+    .swagger-ui select:focus,
+    .swagger-ui .servers select:focus {
+      outline: none;
+      border-color: var(--doane-orange) !important;
     }
   </style>
 </head>
 <body>
+  <header class="doane-bar">
+    <h1>pii-service <span>— API Docs</span></h1>
+    <a class="doane-bar-link" href="/ui">Demo UI &rarr;</a>
+  </header>
   <div id="swagger-ui"></div>
   <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
   <script>
