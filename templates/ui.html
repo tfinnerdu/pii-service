@@ -438,18 +438,40 @@ async function doScan() {
     const scan = await scanR.json();
     const san  = await sanR.json();
     if (scan.error) { err('scan-out', scan.error); return; }
+    if (san.error)  { err('scan-out', san.error);  return; }
 
     const hits = scan.hits || [];
     const rl   = scan.risk_level || 'LOW';
-    const stxt = san.sanitized_text ?? null;
+
+    // /api/v1/sanitize uses `excluded: bool`. /api/v1/policy/apply uses `action_taken: "excluded"`
+    // and `passed: false` (no `excluded` field). Treat both as the same UI signal.
+    const wasExcluded = san.excluded === true
+      || san.action_taken === 'excluded'
+      || san.passed === false;
+    const blockedEnts = san.blocked_entities || [];
+    const stxt = san.sanitized_text;
 
     const statItems = [
       ['Risk:', badge(rl)],
       ['Hits:', `<strong>${hits.length}</strong>`],
-      ['Mode:', `<span class="mono">${mode}</span>`],
+      ['Mode:', `<span class="mono">${policy ? (san.action_taken || mode) : mode}</span>`],
     ];
-    if (corrId) statItems.push(['Corr ID:', `<span class="mono">${esc(san.correlation_id||corrId)}</span>`]);
+    if (policy)  statItems.push(['Policy:', `<span class="mono">${esc(policy)}</span>`]);
+    if (corrId)  statItems.push(['Corr ID:', `<span class="mono">${esc(san.correlation_id||corrId)}</span>`]);
     if (san.sandbox) statItems.push(['', `<span class="rb rMEDIUM">sandbox</span>`]);
+
+    let sanitizedPanel;
+    if (wasExcluded) {
+      sanitizedPanel = `<span class="rb rCRITICAL">EXCLUDED — chunk dropped${
+        blockedEnts.length ? ` (blocked: ${tags(blockedEnts)})` : ''
+      }</span>`;
+    } else if (typeof stxt === 'string') {
+      sanitizedPanel = `<div class="htext">${esc(stxt)}</div>`;
+    } else {
+      // sanitized_text missing or null without an exclusion signal — server-side contract
+      // failure. Refuse to silently re-render raw input.
+      sanitizedPanel = `<div class="err">Server returned no sanitized text and no exclusion signal. Refusing to render raw input.</div>`;
+    }
 
     out('scan-out', `
       ${sbar(statItems)}
@@ -461,9 +483,7 @@ async function doScan() {
         </div>
         <div class="card">
           <div class="card-title">Sanitized</div>
-          ${san.excluded
-            ? `<span class="rb rCRITICAL">EXCLUDED — chunk dropped</span>`
-            : `<div class="htext">${esc(stxt ?? text)}</div>`}
+          ${sanitizedPanel}
         </div>
       </div>
       ${hits.length ? `

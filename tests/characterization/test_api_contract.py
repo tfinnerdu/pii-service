@@ -297,6 +297,162 @@ class TestPoliciesContract:
 
 
 # ---------------------------------------------------------------------------
+# /api/v1/policy/apply response shape — pinned 2026-05-27
+#
+# The UI ("Scan & Sanitize" tab) and downstream callers (Conductor workers,
+# n8n nodes) decide whether to display sanitized output, show an "excluded"
+# indicator, or surface blocked entities by reading the keys pinned below.
+#
+# The shape differs from /api/v1/sanitize on purpose — policy/apply tracks
+# "passed/action_taken" semantics while sanitize tracks "excluded: bool".
+# That divergence has bitten the UI before (a missing `excluded` field led
+# to silent re-display of raw PII). These tests pin the policy/apply shape
+# so any rename or restructure fails CI and forces a conscious update.
+# ---------------------------------------------------------------------------
+
+
+@_presidio_required
+class TestPolicyApplyContract:
+    SINGLE_KEYS = {
+        "policy", "passed", "action_taken", "sanitized_text",
+        "blocked_entities", "hit_count", "risk_level", "request_id",
+    }
+    BATCH_KEYS = {"policy", "results", "total", "excluded_count", "request_id"}
+    RESULT_ITEM_KEYS = {
+        "index", "passed", "action_taken", "sanitized_text",
+        "blocked_entities", "hit_count", "risk_level",
+    }
+    VALID_ACTIONS = {"none", "masked", "redacted", "pseudonymized", "excluded"}
+
+    # -- Single-text shape ---------------------------------------------------
+
+    def test_blocked_response_shape(self, client):
+        """
+        ai_prompt must block on US_SSN. Pinning the blocked-branch shape:
+          passed=False, action_taken="excluded", sanitized_text=None,
+          blocked_entities is a non-empty list, hit_count > 0.
+        If this fails, the UI's wasExcluded check (templates/ui.html doScan)
+        and any Conductor worker that checks `passed` will break.
+        """
+        data = client.post("/api/v1/policy/apply", json={
+            "policy": "ai_prompt",
+            "text": "SSN: 123-45-6789",
+        }).get_json()
+        missing = self.SINGLE_KEYS - set(data.keys())
+        assert not missing, f"/api/v1/policy/apply blocked-branch missing: {missing}"
+        assert data["passed"] is False, "ai_prompt must block on US_SSN"
+        assert data["action_taken"] == "excluded"
+        assert data["sanitized_text"] is None, (
+            "Blocked policy must return sanitized_text=None. The UI uses this "
+            "+ action_taken=='excluded' to render the EXCLUDED indicator. If "
+            "this becomes a string, the UI will display blocked PII as if it "
+            "were sanitized output."
+        )
+        assert isinstance(data["blocked_entities"], list) and data["blocked_entities"], (
+            "Blocked branch must list which entity types caused the block."
+        )
+
+    def test_masked_response_shape(self, client):
+        """
+        log_safe has no block_entity_types, so any detected PII flows through
+        the masked/redacted branch. Pinning that shape:
+          passed=True, action_taken in {redacted/masked/...}, sanitized_text
+          is a non-empty string with the raw PII removed.
+        """
+        raw = "Email jsmith@gmail.com about registration"
+        data = client.post("/api/v1/policy/apply", json={
+            "policy": "log_safe",
+            "text": raw,
+        }).get_json()
+        missing = self.SINGLE_KEYS - set(data.keys())
+        assert not missing, f"/api/v1/policy/apply masked-branch missing: {missing}"
+        assert data["passed"] is True
+        assert data["action_taken"] in self.VALID_ACTIONS
+        assert data["action_taken"] != "excluded"
+        assert isinstance(data["sanitized_text"], str), (
+            "Non-blocked policy with hits must return sanitized_text as a string. "
+            "If this becomes None, the UI cannot distinguish 'sanitized' from "
+            "'blocked' and will fall back to displaying raw input."
+        )
+        assert "jsmith@gmail.com" not in data["sanitized_text"], (
+            "log_safe must redact raw email. Raw PII in sanitized_text is a "
+            "correctness failure, not a contract change."
+        )
+        assert data["blocked_entities"] == []
+
+    def test_no_pii_response_shape(self, client):
+        """
+        Clean text: passed=True, action_taken='none', sanitized_text equals
+        the original text, hit_count=0. Pins that the no-PII path returns the
+        original string (not None) so callers can treat sanitized_text as
+        safe-to-use regardless of branch.
+        """
+        data = client.post("/api/v1/policy/apply", json={
+            "policy": "ai_prompt",
+            "text": "Course offerings for fall semester.",
+        }).get_json()
+        assert data["passed"] is True
+        assert data["action_taken"] == "none"
+        assert data["hit_count"] == 0
+        assert isinstance(data["sanitized_text"], str), (
+            "Clean text must round-trip through sanitized_text as a string. "
+            "Callers should be able to use sanitized_text without a null check "
+            "when passed=True."
+        )
+
+    def test_response_does_not_include_excluded_key(self, client):
+        """
+        Documents the divergence from /api/v1/sanitize. /sanitize returns
+        `excluded: bool`. /policy/apply does NOT — exclusion is signalled via
+        `action_taken == 'excluded'` and `passed == False`.
+
+        This test will fail if someone "helpfully" adds an `excluded` field
+        to align the two endpoints. Adding it is fine — but the UI and any
+        consumer also need to update in the same commit. The failure forces
+        that conversation.
+        """
+        data = client.post("/api/v1/policy/apply", json={
+            "policy": "ai_prompt",
+            "text": "SSN: 123-45-6789",
+        }).get_json()
+        assert "excluded" not in data, (
+            "/api/v1/policy/apply now returns an `excluded` field. This used to "
+            "be intentional divergence from /api/v1/sanitize. If the unification "
+            "is intentional, update templates/ui.html doScan() to read it and "
+            "delete this assertion."
+        )
+
+    # -- Batch shape ---------------------------------------------------------
+
+    def test_batch_response_shape(self, client):
+        data = client.post("/api/v1/policy/apply", json={
+            "policy": "ferpa_strict",
+            "texts": ["No PII here.", "SSN: 123-45-6789"],
+        }).get_json()
+        missing = self.BATCH_KEYS - set(data.keys())
+        assert not missing, f"/api/v1/policy/apply batch missing top-level keys: {missing}"
+        assert data["total"] == 2
+        assert len(data["results"]) == 2
+        for item in data["results"]:
+            item_missing = self.RESULT_ITEM_KEYS - set(item.keys())
+            assert not item_missing, (
+                f"Batch result item missing keys: {item_missing}. "
+                "Consumers iterating result items will KeyError."
+            )
+
+    def test_batch_excluded_count_matches_results(self, client):
+        data = client.post("/api/v1/policy/apply", json={
+            "policy": "ferpa_strict",
+            "texts": ["No PII here.", "SSN: 123-45-6789"],
+        }).get_json()
+        recounted = sum(1 for r in data["results"] if r["action_taken"] == "excluded")
+        assert data["excluded_count"] == recounted, (
+            "Batch excluded_count diverged from sum of result items where "
+            "action_taken == 'excluded'. Two parallel counters rotted out of sync."
+        )
+
+
+# ---------------------------------------------------------------------------
 # /api/v1/stats response shape — pinned 2025-05
 # ---------------------------------------------------------------------------
 
