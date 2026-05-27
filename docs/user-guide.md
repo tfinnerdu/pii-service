@@ -612,8 +612,7 @@ A single CRITICAL hit makes the whole text CRITICAL even if all other hits are L
 
 | Entity | Description | Risk |
 |---|---|---|
-| `STUDENT_ID` | D-prefix Banner IDs (`D1234567`), `@`-prefix Colleague IDs, 7-digit numerics | HIGH |
-| `COLLEAGUE_ID` | 6–8 digit Colleague person IDs (low base score, requires context) | MEDIUM |
+| `STUDENT_ID` | 5–9 digit numeric institutional IDs (Doane's canonical 7-digit form with leading zeros, plus peer-institution variations) and single-letter-prefixed external-system IDs (`S1234567`, `A1234567`). Low base score; context words like "id", "student", "banner", "colleague" boost detection. | HIGH |
 | `DOANE_EMAIL` | `@doane.edu` addresses (tagged separately from generic email) | HIGH |
 | `DATE_OF_BIRTH` | Dates in DOB context (MM/DD/YYYY, YYYY-MM-DD, written month) | HIGH |
 | `FERPA_MARKER` | FERPA-protected record types: "GPA", "transcript", "financial aid", "academic probation", etc. | MEDIUM |

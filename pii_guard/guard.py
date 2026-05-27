@@ -517,9 +517,18 @@ class PiiGuard:
 
     def _pseudonymize(self, text: str, hits: list[EntityHit]) -> str:
         chars = list(text)
+        # Hits are sorted descending by start. Track replaced spans in original
+        # coordinates and skip any new hit that overlaps with one already
+        # processed — without this, two recognizers firing on the same span
+        # (e.g., STUDENT_ID and Presidio's DATE_TIME on "1234567") overwrite
+        # each other's slices and produce garbled output like "3231247987".
+        replaced: list[tuple[int, int]] = []
         for hit in hits:
+            if any(hit.start < e and hit.end > s for s, e in replaced):
+                continue
             fake = self._get_pseudo_value(hit.entity_type, hit.original)
             chars[hit.start:hit.end] = list(fake)
+            replaced.append((hit.start, hit.end))
         return "".join(chars)
 
     def _get_pseudo_value(self, entity_type: str, original: str) -> str:
@@ -622,8 +631,11 @@ def _generate_pseudo(
     if entity_type == "LOCATION":
         return fc[r % len(fc)]
 
-    if entity_type in ("STUDENT_ID", "BANNER_ID", "COLLEAGUE_ID"):
-        return f"D{(r % 9000000) + 1000000:07d}"
+    if entity_type == "STUDENT_ID":
+        # Doane's actual student-ID form is 7 digits with leading zeros allowed.
+        # The pseudonym preserves that shape so embedding/length semantics stay
+        # plausible to downstream consumers.
+        return f"{r % 10000000:07d}"
 
     if entity_type == "FAFSA_ID":
         return f"NE-{(r % 900000) + 100000:06d}"

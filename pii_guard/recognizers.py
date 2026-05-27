@@ -78,19 +78,21 @@ _RECOGNIZER_SPECS = [
         "entity": "STUDENT_ID",
         "name": "StudentIdRecognizer",
         "patterns": [
-            ("doane_d_prefix",   r"\bD\d{7}\b",    0.9),
-            ("colleague_at",     r"@\d{7,8}\b",    0.85),
-            ("banner_numeric",   r"\b[0-9]{7}\b",  0.35),
+            # Bare numeric is the canonical Doane form (7 digits, often with leading
+            # zeros). 5-9 covers Doane plus typical peer-institution and external-
+            # system variations. Low base score; relies on context boost from words
+            # like "id", "student", "banner", etc. to clear the threshold.
+            ("numeric",         r"\b\d{5,9}\b",            0.3),
+            # Single-letter-prefixed alphanumeric appears in feeds from external SIS
+            # systems and some peer institutions (S1234567, A1234567). Doane's own
+            # IDs do NOT use a letter prefix — this branch only fires on imported data.
+            ("letter_prefixed", r"\b[A-Z]\d{5,9}\b",       0.5),
         ],
-        "context": ["student", "id", "banner", "colleague", "sis", "person", "account", "enrollee"],
-    },
-    {
-        "entity": "COLLEAGUE_ID",
-        "name": "ColleagueIdRecognizer",
-        "patterns": [
-            ("colleague_numeric", r"\b\d{6,8}\b", 0.3),
+        "context": [
+            "student", "student id", "id", "banner", "banner id",
+            "colleague", "colleague id", "sis", "person id", "person",
+            "account", "enrollee", "record id", "external id",
         ],
-        "context": ["colleague", "person.id", "person_id", "ellucian", "erp", "record id", "colleague id"],
     },
     {
         "entity": "DOANE_EMAIL",
@@ -235,6 +237,21 @@ _RECOGNIZER_SPECS = [
             ("ssn_spaced",  r"(?!219-09-9999|078-05-1120)(?!666|000|9\d{2})\d{3} (?!00)\d{2} (?!0{4})\d{4}",  0.75),
             ("ssn_dotted",  r"(?!219\.09\.9999|078\.05\.1120)(?!666|000|9\d{2})\d{3}\.(?!00)\d{2}\.(?!0{4})\d{4}", 0.75),
             ("ssn_nodash",  r"(?!219099999|078051120)(?!666|000|9\d{2})\d{9}(?!\d)",                           0.3),
+            # Claimed-SSN: catches malformed SSN-shaped numbers (XXX-XXX-XXXX typo,
+            # XXX.XX.XXXX, bare 9 digits) when an SSN-claim phrase appears immediately
+            # before. The strict patterns above reject these on format alone; this
+            # branch trusts the verbal claim. Anchor phrases are intentionally narrow
+            # — "social" or "number" alone are too noisy.
+            #
+            # Variable-width lookbehind on the anchor phrase keeps the match span to
+            # just the digits, avoiding overlap with spaCy's ORGANIZATION tag on "SSN".
+            # Works in Presidio's regex backend (third-party `regex` module); Python's
+            # built-in `re` would reject the variable-width lookbehind.
+            ("ssn_claimed",
+             r"(?i)(?<=\b(?:ssn|social\s+security(?:\s+number|\s+#)?|soc\s+sec)\b"
+             r"[^\d\n]{0,15})"
+             r"\d{3}[-\s.]?\d{2,3}[-\s.]?\d{4}\b",
+             0.85),
         ],
         "context": ["ssn", "social security", "social", "ss#", "ssn#", "ssid", "tax id"],
     },

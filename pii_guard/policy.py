@@ -127,7 +127,7 @@ BUILT_IN_POLICIES: dict[str, PiiPolicy] = {
             "US_PASSPORT", "US_DRIVER_LICENSE", "IBAN_CODE", "FINANCIAL_ACCOUNT",
             "IMMIGRATION_STATUS", "DISABILITY_ACCOMMODATION", "VETERAN_STATUS",
             "EMAIL_ADDRESS", "DOANE_EMAIL", "PHONE_NUMBER", "STUDENT_ID",
-            "COLLEAGUE_ID", "BANNER_ID", "DATE_OF_BIRTH", "FAFSA_ID",
+            "DATE_OF_BIRTH", "FAFSA_ID",
             "FERPA_MARKER", "HIPAA_MARKER", "MEDICAL_LICENSE",
         ],
         pass_through_entity_types=["DATE_TIME", "URL"],

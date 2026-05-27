@@ -33,7 +33,8 @@ not reachable through `PII_CONFIG_FILE` at all:
 
 | Location | Hardcoded value | Institution assumption |
 |---|---|---|
-| `guard.py:626` | `STUDENT_ID` / `BANNER_ID` / `COLLEAGUE_ID` → `D{7}` | Doane D-prefix |
+| `guard.py:626` | `STUDENT_ID` → 7-digit zero-padded numeric | Doane's actual ID shape (7 digits, leading zeros). Peer institutions with different digit lengths would need to override. |
+| `recognizers.py:STUDENT_ID` | digit range `\d{5,9}` and context vocabulary | Range fits Doane + common peer-institution forms; vocabulary skews to higher-ed terms. Both belong in a tenant config eventually. |
 | `guard.py:629` | `FAFSA_ID` → `NE-{6}` | **Nebraska** state prefix |
 | `guard.py:682` | `STUDENT_ACCOUNT_ID` → `TN-{9}` | TouchNet prefix |
 

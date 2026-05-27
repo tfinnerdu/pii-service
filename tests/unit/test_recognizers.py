@@ -28,26 +28,36 @@ def r_guard():
 # ---------------------------------------------------------------------------
 
 class TestStudentIdRecognizer:
-    def test_d_prefix_detected(self, r_guard):
-        result = r_guard.scan("Student D1234567 enrolled")
+    def test_numeric_with_id_context_detected(self, r_guard):
+        # Doane's actual form: 7-digit numeric with leading zeros. Context
+        # word "id" pushes the low base score over the threshold.
+        result = r_guard.scan("My id is 1234567")
         assert "STUDENT_ID" in {h.entity_type for h in result.hits}
 
-    def test_colleague_at_prefix_detected(self, r_guard):
-        result = r_guard.scan("Person @01234567 flagged")
+    def test_leading_zero_numeric_detected(self, r_guard):
+        result = r_guard.scan("Student id 0001234")
         assert "STUDENT_ID" in {h.entity_type for h in result.hits}
 
-    def test_d_prefix_score_above_09(self, r_guard):
-        result = r_guard.scan("D9876543")
+    def test_letter_prefixed_detected(self, r_guard):
+        # External-system IDs (S1234567 from non-Doane SIS). This case drove
+        # the redesign — used to slip past the regex entirely.
+        result = r_guard.scan("Student id S1234567")
+        assert "STUDENT_ID" in {h.entity_type for h in result.hits}
+
+    def test_numeric_without_context_not_detected(self, r_guard):
+        # Without context, "1234567" is too noisy to flag — could be an
+        # invoice number, line item, anything. Context boost is the gate.
+        result = r_guard.scan("the value is 1234567")
+        # The word "value" is not in STUDENT_ID context, so the 0.3 base
+        # stays below the 0.5 threshold. Asserting absence here pins the
+        # "context is required" property.
         sid_hits = [h for h in result.hits if h.entity_type == "STUDENT_ID"]
-        if sid_hits:
-            assert sid_hits[0].score >= 0.85, "D-prefix student ID should have high confidence"
-
-    def test_d_prefix_not_triggered_by_non_d_letter(self, r_guard):
-        result = r_guard.scan("X1234567")
-        # X-prefix should NOT match the D-prefix pattern
-        d_hits = [h for h in result.hits if h.entity_type == "STUDENT_ID"
-                  and h.score >= 0.85]
-        assert not d_hits
+        # Allow this to be flaky if Presidio adds an unrelated context word
+        # match — assert only that score, if present, stays low.
+        for h in sid_hits:
+            assert h.score < 0.5, (
+                f"Bare numeric scored {h.score} without context — boost mechanism may have changed."
+            )
 
 
 # ---------------------------------------------------------------------------

@@ -23,34 +23,104 @@ def _matches(pattern: str, text: str, flags: int = re.IGNORECASE) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# STUDENT_ID patterns — pinned 2025-05
+# STUDENT_ID patterns — re-pinned 2026-05-27
+#
+# Replaced the original Doane-D-prefix pattern. Doane does NOT use a D prefix
+# (that was a wrong assumption in v1). Real Doane IDs are 7-digit numerics
+# with leading zeros allowed. Peer institutions and external SIS feeds also
+# send 5-9 digit numerics, sometimes with a single letter prefix.
+#
+# If either pattern changes, update the field-context-hint table in
+# pii_guard/config.py — the hint mechanism boosts these patterns via the
+# context vocabulary and a regex change can silently break hint-driven scans.
 # ---------------------------------------------------------------------------
 
 class TestStudentIdPatterns:
-    """
-    Known-good: D-prefix pattern matches Banner student IDs.
-    If this changes, update Banner integration tests and Conductor worker field mappings.
-    """
-    DPREFIX  = r"\bD\d{7}\b"
-    AT_PREFIX = r"@\d{7,8}\b"
+    NUMERIC         = r"\b\d{5,9}\b"
+    LETTER_PREFIXED = r"\b[A-Z]\d{5,9}\b"
 
-    def test_d_prefix_matches_standard(self):
-        assert _matches(self.DPREFIX, "D1234567")
+    def test_numeric_matches_7_digit(self):
+        assert _matches(self.NUMERIC, "1234567")
 
-    def test_d_prefix_matches_in_sentence(self):
-        assert _matches(self.DPREFIX, "Student D9876543 enrolled")
+    def test_numeric_matches_leading_zero(self):
+        # Doane's canonical form. If this fails, leading-zero Doane IDs go uncaught.
+        assert _matches(self.NUMERIC, "0001234")
 
-    def test_d_prefix_does_not_match_short(self):
-        assert not _matches(self.DPREFIX, "D123456")  # only 6 digits
+    def test_numeric_matches_5_through_9_digits(self):
+        for n in (5, 6, 7, 8, 9):
+            assert _matches(self.NUMERIC, "1" * n), f"failed at length {n}"
 
-    def test_d_prefix_does_not_match_non_d(self):
-        assert not _matches(self.DPREFIX, "X1234567")
+    def test_numeric_does_not_match_4_digits(self):
+        # 4 digits is below the range — too noisy to flag (years, course codes).
+        assert not _matches(self.NUMERIC, "1234")
 
-    def test_at_prefix_matches_colleague(self):
-        assert _matches(self.AT_PREFIX, "@01234567")
+    def test_numeric_does_not_match_10_digits(self):
+        # 10+ digits leaves SSN/phone territory. Out of scope for STUDENT_ID.
+        assert not _matches(self.NUMERIC, "1234567890")
 
-    def test_at_prefix_does_not_match_email(self):
-        assert not _matches(self.AT_PREFIX, "user@doane.edu")
+    def test_letter_prefixed_matches_s_prefix(self):
+        # External-system IDs like S1234567 must be caught. The S prefix was
+        # the bug report that drove this redesign.
+        assert _matches(self.LETTER_PREFIXED, "S1234567")
+
+    def test_letter_prefixed_matches_other_letters(self):
+        for letter in ("A", "B", "P", "T", "X"):
+            assert _matches(self.LETTER_PREFIXED, f"{letter}1234567"), (
+                f"{letter}-prefix ID not matched"
+            )
+
+    def test_letter_prefixed_does_not_match_lowercase(self):
+        # Letter prefix is uppercase only. Lower-case would conflict with
+        # word-internal substrings (e.g., "s1234567" inside "abcs1234567").
+        assert not _matches(self.LETTER_PREFIXED, "s1234567", flags=0)
+
+    def test_d_prefix_no_longer_special(self):
+        """
+        Documents the v2 change: D-prefix was a wrong assumption about Doane's
+        ID format and is removed as a special-case pattern. D1234567 is now
+        matched only by the generic letter_prefixed pattern at lower confidence,
+        not by a Doane-specific high-confidence regex. If the old DPREFIX
+        pattern is re-introduced, this test will start passing for the wrong
+        reason and should be re-evaluated.
+        """
+        # The generic letter_prefixed pattern still matches D1234567 — that's
+        # correct behavior. The point of the test is the *absence* of a
+        # high-confidence D-specific pattern in the recognizer spec.
+        from pii_guard.recognizers import _RECOGNIZER_SPECS
+        student_id = next(s for s in _RECOGNIZER_SPECS if s["entity"] == "STUDENT_ID")
+        pattern_names = {p[0] for p in student_id["patterns"]}
+        assert "doane_d_prefix" not in pattern_names, (
+            "doane_d_prefix re-introduced. Doane does NOT use a D-prefix on "
+            "real student IDs; reinstating this pattern bakes a wrong assumption "
+            "back into detection."
+        )
+
+    def test_at_prefix_no_longer_present(self):
+        """
+        Documents the v2 change: the @-prefix pattern (@1234567) is removed
+        because Doane has never seen this notation in real text. If it shows
+        up in a feed later, re-add as a new pattern with a fresh confidence.
+        """
+        from pii_guard.recognizers import _RECOGNIZER_SPECS
+        student_id = next(s for s in _RECOGNIZER_SPECS if s["entity"] == "STUDENT_ID")
+        pattern_names = {p[0] for p in student_id["patterns"]}
+        assert "colleague_at" not in pattern_names
+
+    def test_colleague_id_recognizer_removed(self):
+        """
+        Documents the v2 change: COLLEAGUE_ID was a separate recognizer with
+        an overlapping numeric pattern. Collapsed into STUDENT_ID — same number,
+        same handling, single canonical entity type. BANNER_ID was already
+        dead code (referenced in models/policy but no recognizer existed).
+        """
+        from pii_guard.recognizers import _RECOGNIZER_SPECS
+        entities = {s["entity"] for s in _RECOGNIZER_SPECS}
+        assert "COLLEAGUE_ID" not in entities, (
+            "COLLEAGUE_ID recognizer re-added. The v2 design folds it into "
+            "STUDENT_ID. If we genuinely need separate semantics, plumb the "
+            "new entity through models.py, policy.py, and config.py field hints "
+            "in the same commit."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -354,3 +424,59 @@ class TestSsnPresidioCharacterization:
             f"Pseudonymized SSN '{pseudo}' does not match XXX-XX-XXXX format. "
             "This will break downstream callers that expect SSN format preservation."
         )
+
+
+# ---------------------------------------------------------------------------
+# Claimed-SSN (verbal-claim anchor) — pinned 2026-05-27
+#
+# The strict US_SSN patterns reject malformed SSNs by design (3-3-4 typo,
+# bare 9 digits without context). When the surrounding text verbally claims
+# the number is an SSN ("ssn:", "social security number", "soc sec"), we
+# trust the claim and flag it anyway. This catches user-typed SSNs that
+# don't match the canonical format and bare-9-digit SSNs in form data.
+#
+# Anchor list is intentionally narrow: "social" alone matches "social media",
+# "number" alone matches "phone number". Anchoring to specific phrases keeps
+# false-positive risk low.
+# ---------------------------------------------------------------------------
+
+class TestClaimedSsnPattern:
+    # Uses the third-party `regex` module (same backend Presidio uses) to evaluate
+    # the variable-width lookbehind. Python's built-in `re` would reject it. If
+    # this test ever migrates to plain `re`, the lookbehind has to be flattened
+    # and the match span will grow to include the anchor phrase.
+    PATTERN = (
+        r"(?i)(?<=\b(?:ssn|social\s+security(?:\s+number|\s+#)?|soc\s+sec)\b"
+        r"[^\d\n]{0,15})"
+        r"\d{3}[-\s.]?\d{2,3}[-\s.]?\d{4}\b"
+    )
+
+    @staticmethod
+    def _claimed_matches(text: str) -> bool:
+        import regex
+        return bool(regex.search(TestClaimedSsnPattern.PATTERN, text))
+
+    def test_canonical_format_with_ssn_anchor(self):
+        assert self._claimed_matches("SSN: 123-45-6789")
+
+    def test_malformed_3_3_4_with_anchor(self):
+        # The original bug-report case: "social security number is 123-654-9898".
+        # Strict patterns reject 3-3-4 grouping. With anchor phrase, we catch it.
+        assert self._claimed_matches("my social security number is 123-654-9898")
+
+    def test_bare_9_digits_with_anchor(self):
+        assert self._claimed_matches("SSN 123456789")
+
+    def test_soc_sec_abbreviation_anchor(self):
+        assert self._claimed_matches("soc sec 123-45-6789")
+
+    def test_no_match_without_anchor(self):
+        # Malformed SSN with no verbal claim looks like a phone — leave it.
+        assert not self._claimed_matches("call me at 123-654-9898 tomorrow")
+
+    def test_no_match_with_weak_anchor(self):
+        # "social" alone is not an SSN anchor — too noisy.
+        assert not self._claimed_matches("social media handle 123-456-7890")
+
+    def test_no_match_when_number_too_short(self):
+        assert not self._claimed_matches("SSN: 123-45")

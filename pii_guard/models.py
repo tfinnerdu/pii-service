@@ -70,8 +70,6 @@ ENTITY_RISK_MAP: dict[str, RiskLevel] = {
     "EMAIL_ADDRESS":            RiskLevel.HIGH,
     "PHONE_NUMBER":             RiskLevel.HIGH,
     "STUDENT_ID":               RiskLevel.HIGH,
-    "COLLEAGUE_ID":             RiskLevel.HIGH,
-    "BANNER_ID":                RiskLevel.HIGH,
     "DATE_OF_BIRTH":            RiskLevel.HIGH,
     "DOANE_EMAIL":              RiskLevel.HIGH,
     "FAFSA_ID":                 RiskLevel.HIGH,

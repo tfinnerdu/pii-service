@@ -88,8 +88,8 @@ BUILT_IN_SCHEMA_PROFILES: dict[str, dict] = {
     "colleague_person": {
         "description": "Ellucian Colleague PERSON record — typical field names from Ethos EEDM",
         "field_hints": {
-            "id":                       "COLLEAGUE_ID",
-            "colleaguePersonId":        "COLLEAGUE_ID",
+            "id":                       "STUDENT_ID",
+            "colleaguePersonId":        "STUDENT_ID",
             "bannerId":                 "STUDENT_ID",
             "lastName":                 "PERSON",
             "firstName":                "PERSON",
@@ -120,7 +120,7 @@ BUILT_IN_SCHEMA_PROFILES: dict[str, dict] = {
             "MailingCity":             "LOCATION",
             "MailingPostalCode":       "LOCATION",
             "SIS_ID__c":               "STUDENT_ID",
-            "Ethos_Guid__c":           "COLLEAGUE_ID",
+            "Ethos_Guid__c":           "STUDENT_ID",
             "SSN__c":                  "US_SSN",
         },
         "default_mode": "mask",
@@ -135,7 +135,7 @@ BUILT_IN_SCHEMA_PROFILES: dict[str, dict] = {
             "emailAddress":            "EMAIL_ADDRESS",
             "phoneNumber":             "PHONE_NUMBER",
             "dateOfBirth":             "DATE_OF_BIRTH",
-            "colleaguePersonId":       "COLLEAGUE_ID",
+            "colleaguePersonId":       "STUDENT_ID",
             "bannerId":                "STUDENT_ID",
             "gender":                  "NRP",
             "race":                    "NRP",
@@ -170,8 +170,8 @@ BUILT_IN_SCHEMA_PROFILES: dict[str, dict] = {
     "conductor_ethos": {
         "description": "Orkes Conductor workflow — Ethos change notification input shape",
         "field_hints": {
-            "resource.id":             "COLLEAGUE_ID",
-            "resource.content.id":     "COLLEAGUE_ID",
+            "resource.id":             "STUDENT_ID",
+            "resource.content.id":     "STUDENT_ID",
             "notes":                   None,
             "comments":                None,
         },
@@ -180,8 +180,8 @@ BUILT_IN_SCHEMA_PROFILES: dict[str, dict] = {
     "workday_hr": {
         "description": "Workday HCM worker record — common field names from Workday SOAP/REST API",
         "field_hints": {
-            "Worker_ID":                    "COLLEAGUE_ID",
-            "Employee_ID":                  "COLLEAGUE_ID",
+            "Worker_ID":                    "STUDENT_ID",
+            "Employee_ID":                  "STUDENT_ID",
             "National_Identifier":          "US_SSN",
             "Social_Security_Number":       "US_SSN",
             "Legal_Name_First_Name":        "PERSON",
@@ -298,8 +298,8 @@ BUILT_IN_SCHEMA_PROFILES: dict[str, dict] = {
             "streetAddress":                "LOCATION",
             "city":                         "LOCATION",
             "postalCode":                   "LOCATION",
-            "employeeId":                   "COLLEAGUE_ID",
-            "onPremisesSamAccountName":     "COLLEAGUE_ID",
+            "employeeId":                   "STUDENT_ID",
+            "onPremisesSamAccountName":     "STUDENT_ID",
             "body.content":                 None,
             "content":                      None,
             "subject":                      None,
