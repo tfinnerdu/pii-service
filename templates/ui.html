@@ -182,16 +182,19 @@
         <textarea id="s-text" rows="9" placeholder="Paste text here…&#10;&#10;e.g. Student D1234567, SSN 123-45-6789, jsmith@doane.edu"></textarea>
       </div>
       <div class="fr">
+        <div><label>Policy</label>
+          <select id="s-policy" onchange="onScanPolicyChange()">
+            <option value="">No Policy</option>
+          </select>
+        </div>
         <div><label>Mode</label>
-          <select id="s-mode">
+          <select id="s-mode" onchange="onScanModeChange()">
             <option value="mask">mask</option>
             <option value="pseudonymize">pseudonymize</option>
             <option value="redact">redact</option>
             <option value="exclude">exclude</option>
           </select>
-        </div>
-        <div><label>Policy (optional)</label>
-          <select id="s-policy"><option value="">— none —</option></select>
+          <small id="s-mode-hint" style="display:none;color:var(--muted);font-size:.7rem"></small>
         </div>
       </div>
       <div class="fg">
@@ -400,12 +403,16 @@ async function catalogs() {
       const el = document.getElementById(sel);
       for (const p of pol.policies||[]) {
         const o = new Option(`${p.name} — ${p.description||''}`, p.name);
+        // Stash default_mode so the Scan tab can lock the Mode dropdown to match.
+        if (p.default_mode) o.dataset.mode = p.default_mode;
         el.add(o);
       }
     }
     // default policy selector to first real policy
     const pp = document.getElementById('p-policy');
     if (pp.options.length > 1) pp.selectedIndex = 1;
+    // Initialize the Scan tab's cascade in case the page loads with a policy preselected.
+    onScanPolicyChange();
 
     const rs = document.getElementById('r-schema');
     for (const s of sch.schemas||[]) {
@@ -417,6 +424,43 @@ async function catalogs() {
 // ═══════════════════════════════════════════════════════════════
 // SCAN & SANITIZE
 // ═══════════════════════════════════════════════════════════════
+
+// Remembers the user's last manually-chosen Mode so we can restore it when
+// they switch back to "No Policy". A policy override doesn't clobber intent.
+let _scanManualMode = null;
+
+function onScanPolicyChange() {
+  const polSel  = document.getElementById('s-policy');
+  const modeSel = document.getElementById('s-mode');
+  const hint    = document.getElementById('s-mode-hint');
+  const opt     = polSel.options[polSel.selectedIndex];
+  const policyMode = opt ? opt.dataset.mode : null;
+
+  if (polSel.value && policyMode) {
+    // Lock Mode to the policy's default_mode. The /api/v1/policy/apply endpoint
+    // ignores the `mode` body field — surfacing that here keeps the UI honest.
+    if (_scanManualMode === null) _scanManualMode = modeSel.value;
+    modeSel.value = policyMode;
+    modeSel.disabled = true;
+    hint.style.display = '';
+    hint.textContent = `Set by policy "${polSel.value}"`;
+  } else {
+    modeSel.disabled = false;
+    hint.style.display = 'none';
+    hint.textContent = '';
+    if (_scanManualMode !== null) {
+      modeSel.value = _scanManualMode;
+      _scanManualMode = null;
+    }
+  }
+}
+
+function onScanModeChange() {
+  // Only fires when the user changes Mode themselves. While a policy is active
+  // the select is disabled, so any value change here is intentional manual input.
+  _scanManualMode = document.getElementById('s-mode').value;
+}
+
 async function doScan() {
   const text = document.getElementById('s-text').value.trim();
   if (!text) return;
