@@ -370,14 +370,29 @@ def list_recognizers():
     """
     try:
         from pii_guard.recognizers import _RECOGNIZER_SPECS, _PRESIDIO_CONTEXT
+        from pii_guard.rules_metadata import (
+            RECOGNIZER_DESCRIPTIONS, BUILTIN_DESCRIPTIONS, PATTERN_EXAMPLES,
+        )
         custom_entities = {spec["entity"] for spec in _RECOGNIZER_SPECS}
+
+        def _pattern_block(entity: str, name: str, regex: str, score: float):
+            ex = PATTERN_EXAMPLES.get((entity, name), {})
+            return {
+                "name":       name,
+                "regex":      regex,
+                "score":      score,
+                "examples":   ex.get("matches", []),
+                "no_matches": ex.get("no_matches", []),
+            }
+
         return jsonify({
             "custom": [
                 {
                     "entity": spec["entity"],
                     "name": spec["name"],
+                    "description": RECOGNIZER_DESCRIPTIONS.get(spec["entity"], ""),
                     "patterns": [
-                        {"name": n, "regex": rx, "score": sc}
+                        _pattern_block(spec["entity"], n, rx, sc)
                         for n, rx, sc in spec["patterns"]
                     ],
                     "context": spec.get("context", []),
@@ -385,7 +400,11 @@ def list_recognizers():
                 for spec in _RECOGNIZER_SPECS
             ],
             "presidio_builtins": [
-                {"entity": entity, "context": list(ctx)}
+                {
+                    "entity": entity,
+                    "description": BUILTIN_DESCRIPTIONS.get(entity, ""),
+                    "context": list(ctx),
+                }
                 for entity, ctx in _PRESIDIO_CONTEXT.items()
                 if entity not in custom_entities
             ],
@@ -399,19 +418,65 @@ def list_recognizers():
 @require_api_key
 def list_entities():
     """
-    All entity types this service can detect.
-    Useful for callers building exclude_entity_types allow-lists.
+    All entity types this service can detect, enriched with description, risk
+    level, the recognizer that produces them, every field-hint pointing to
+    them across all schemas, and how each built-in policy treats them.
+    Powers the Entities section of the Rules page.
     """
     presidio_defaults = [
         "CREDIT_CARD", "CRYPTO", "DATE_TIME", "EMAIL_ADDRESS", "IBAN_CODE",
-        "IP_ADDRESS", "LOCATION", "MEDICAL_LICENSE", "NRP", "PERSON",
-        "PHONE_NUMBER", "URL", "US_BANK_NUMBER", "US_DRIVER_LICENSE",
+        "IP_ADDRESS", "LOCATION", "MEDICAL_LICENSE", "NRP", "ORGANIZATION",
+        "PERSON", "PHONE_NUMBER", "URL", "US_BANK_NUMBER", "US_DRIVER_LICENSE",
         "US_ITIN", "US_PASSPORT", "US_SSN",
     ]
+
+    from pii_guard.recognizers import _RECOGNIZER_SPECS
+    from pii_guard.rules_metadata import (
+        RECOGNIZER_DESCRIPTIONS, BUILTIN_DESCRIPTIONS, ENTITY_DESCRIPTIONS,
+        reverse_field_hint_index, policy_treatment,
+    )
+    from pii_guard.models import ENTITY_RISK_MAP, RiskLevel
+    from pii_guard.policy import BUILT_IN_POLICIES
+    from pii_guard.config import BUILT_IN_SCHEMA_PROFILES
+
+    # Build the reverse field-hint index across all schemas.
+    schema_list = [
+        {"name": name, "fields": prof.get("field_hints", {})}
+        for name, prof in BUILT_IN_SCHEMA_PROFILES.items()
+    ]
+    field_index = reverse_field_hint_index(schema_list)
+
+    # Map recognizer entity -> recognizer name (for cross-linking from Entities).
+    recognizer_for_entity = {s["entity"]: s["name"] for s in _RECOGNIZER_SPECS}
+
+    def _entity_block(entity: str, source: str) -> dict:
+        description = (
+            ENTITY_DESCRIPTIONS.get(entity)
+            or RECOGNIZER_DESCRIPTIONS.get(entity)
+            or BUILTIN_DESCRIPTIONS.get(entity)
+            or ""
+        )
+        risk = ENTITY_RISK_MAP.get(entity, RiskLevel.LOW)
+        return {
+            "entity":           entity,
+            "source":           source,  # "custom" | "presidio"
+            "description":      description,
+            "risk_level":       risk.value,
+            "recognizer":       recognizer_for_entity.get(entity),
+            "field_hints":      field_index.get(entity, []),
+            "policy_treatment": policy_treatment(entity, BUILT_IN_POLICIES.values()),
+        }
+
+    custom_entities = [s["entity"] for s in _RECOGNIZER_SPECS]
     return jsonify({
         "presidio_defaults": presidio_defaults,
-        "education_custom": DOANE_RECOGNIZER_REGISTRY,
-        "total": len(presidio_defaults) + len(DOANE_RECOGNIZER_REGISTRY),
+        "education_custom":  custom_entities,
+        "total":             len(presidio_defaults) + len(custom_entities),
+        "details": (
+            [_entity_block(e, "custom")   for e in custom_entities] +
+            [_entity_block(e, "presidio") for e in presidio_defaults
+             if e not in set(custom_entities)]
+        ),
     })
 
 

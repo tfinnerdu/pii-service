@@ -146,6 +146,14 @@
     details.rec[open]>summary .arr::before{content:'\25B2'}
     details.rec>.rec-body{background:#fff;border:1px solid var(--doane-border);border-top:none;border-bottom-left-radius:8px;border-bottom-right-radius:8px;padding:12px}
     .rules-h{font-size:.85rem;font-weight:700;color:var(--doane-slate);margin-bottom:12px}
+    /* Flash highlight when an entity card is jumped-to via a chip click. */
+    @keyframes entityFlash {
+      0%   { box-shadow: 0 0 0 0 rgba(255,121,0,0); }
+      30%  { box-shadow: 0 0 0 4px rgba(255,121,0,.45); }
+      100% { box-shadow: 0 0 0 0 rgba(255,121,0,0); }
+    }
+    details.rec.flash{animation: entityFlash 1.4s ease-out}
+    .entity-chip:hover{filter:brightness(1.08);outline:1px solid rgba(255,121,0,.5)}
   </style>
 </head>
 <body>
@@ -752,13 +760,54 @@ const scorePill = s => {
   return `<span class="score-pill ${cls}">${s}</span>`;
 };
 
+// Clickable entity badge — scrolls to the matching Entity card and briefly
+// highlights it. Used inside Recognizer / Policy / Schema cards as a cross-link.
+function entityChip(entity, opts = {}) {
+  const extraStyle = opts.style || '';
+  return `<span class="et entity-chip" data-entity="${esc(entity)}" `
+       + `style="cursor:pointer;${extraStyle}" `
+       + `title="Jump to entity detail">${esc(entity)}</span>`;
+}
+
+function jumpToEntity(entity) {
+  const target = document.getElementById('ent-' + entity);
+  if (!target) return;
+  target.open = true;
+  target.scrollIntoView({behavior: 'smooth', block: 'center'});
+  target.classList.add('flash');
+  setTimeout(() => target.classList.remove('flash'), 1600);
+}
+
+// Mini live-test for a single recognizer card. Sends to /api/v1/explain and
+// reports whether THIS entity fired.
+async function recognizerTest(entity, inputId, outId) {
+  const text = document.getElementById(inputId).value.trim();
+  const out  = document.getElementById(outId);
+  if (!text) { out.innerHTML = '<span style="color:var(--muted)">Enter text to test.</span>'; return; }
+  out.innerHTML = '<span class="spin"></span> Testing…';
+  try {
+    const d = await (await api('/api/v1/explain', {method:'POST', body:JSON.stringify({text})})).json();
+    if (d.error) { out.innerHTML = `<span style="color:var(--high)">${esc(d.error)}</span>`; return; }
+    const hits = (d.hits || []).filter(h => h.entity_type === entity);
+    if (!hits.length) {
+      out.innerHTML = `<span style="color:var(--muted)">No <strong>${esc(entity)}</strong> hits in that text.</span>`;
+      return;
+    }
+    out.innerHTML = `<strong style="color:var(--low)">${hits.length} hit${hits.length!==1?'s':''}</strong> &mdash; `
+      + hits.map(h => `<span class="mono" style="font-size:.7rem">${esc(h.pattern_name||'spaCy')}</span> @ ${scorePill(h.score)}`).join(', ');
+  } catch (e) {
+    out.innerHTML = `<span style="color:var(--high)">Request failed: ${esc(e.message)}</span>`;
+  }
+}
+
 async function loadRules() {
   out('rules-content', '<div class="empty">Loading rules…</div>');
   try {
-    const [recR, polR, entR] = await Promise.all([
+    const [recR, polR, entR, schR] = await Promise.all([
       fetch('/api/v1/recognizers'),
       fetch('/api/v1/policies'),
       fetch('/api/v1/entities'),
+      fetch('/api/v1/schemas'),
     ]);
     const checkJson = async (r, ep) => {
       if (!r.ok) throw new Error(`${ep} returned HTTP ${r.status} — restart the service to pick up new routes`);
@@ -767,18 +816,22 @@ async function loadRules() {
     const rec = await checkJson(recR, '/api/v1/recognizers');
     const pol = await checkJson(polR, '/api/v1/policies');
     const ent = await checkJson(entR, '/api/v1/entities');
+    const sch = await checkJson(schR, '/api/v1/schemas');
 
     const policies = pol.policies || [];
     const custom   = rec.custom || [];
     const builtins = rec.presidio_builtins || [];
+    const entities = ent.details || [];
+    const schemas  = sch.schemas || [];
 
     // Populate entity filter dropdown (deduplicated)
     const sel = document.getElementById('rt-filter');
     const allEnt = [...new Set([...(ent.education_custom||[]), ...(ent.presidio_defaults||[])])].sort();
     allEnt.forEach(e => { if (!sel.querySelector(`option[value="${CSS.escape(e)}"]`)) sel.add(new Option(e, e)); });
 
+    // -- POLICIES -------------------------------------------------------
     const polHtml = `
-      <p class="rules-h">Policies</p>
+      <p class="rules-h">Policies <small style="font-weight:400;color:var(--muted)">(${policies.length})</small></p>
       <div class="policy-grid" style="margin-bottom:24px">
         ${policies.map(p => `
           <div class="card">
@@ -789,55 +842,176 @@ async function loadRules() {
             ${p.block_entity_types?.length ? `
               <div style="margin-bottom:7px">
                 <span style="font-size:.62rem;color:var(--high);font-weight:700;text-transform:uppercase;letter-spacing:.06em">Blocks </span>
-                ${p.block_entity_types.map(e=>`<span class="et" style="background:rgba(220,38,38,.12);color:var(--high)">${esc(e)}</span>`).join('')}
+                ${p.block_entity_types.map(e=>entityChip(e, {style:'background:rgba(220,38,38,.12);color:var(--high)'})).join('')}
               </div>` : ''}
             ${p.pass_through_entity_types?.length ? `
               <div>
                 <span style="font-size:.62rem;color:var(--low);font-weight:700;text-transform:uppercase;letter-spacing:.06em">Passes </span>
-                ${p.pass_through_entity_types.map(e=>`<span class="et" style="background:rgba(22,163,74,.12);color:var(--low)">${esc(e)}</span>`).join('')}
+                ${p.pass_through_entity_types.map(e=>entityChip(e, {style:'background:rgba(22,163,74,.12);color:var(--low)'})).join('')}
               </div>` : ''}
             ${p.exclude_any_pii ? `<div style="margin-top:8px"><span class="rb rCRITICAL">exclude any PII</span></div>` : ''}
           </div>`).join('')}
       </div>`;
 
+    // -- CUSTOM RECOGNIZERS (enriched: description, examples, mini-test) ---
+    const renderPatternExamples = (p) => {
+      const ok = (p.examples||[]).map(s => `<li><span class="mono" style="color:var(--low)">${esc(s)}</span></li>`).join('');
+      const no = (p.no_matches||[]).map(s => `<li><span class="mono" style="color:var(--muted);text-decoration:line-through">${esc(s)}</span></li>`).join('');
+      if (!ok && !no) return '';
+      return `<div style="margin-top:6px;font-size:.7rem;color:var(--muted)">
+        ${ok ? `<div>Matches:</div><ul style="margin:2px 0 6px 16px;padding:0">${ok}</ul>` : ''}
+        ${no ? `<div>Doesn't match:</div><ul style="margin:2px 0 0 16px;padding:0">${no}</ul>` : ''}
+      </div>`;
+    };
+
     const customHtml = `
       <p class="rules-h">Custom Recognizers <small style="font-weight:400;color:var(--muted)">(${custom.length})</small></p>
       <div style="margin-bottom:24px">
-        ${custom.map(r => `
+        ${custom.map((r,idx) => `
           <details class="rec" style="margin-bottom:6px">
             <summary>
-              <span class="et">${esc(r.entity)}</span>
+              ${entityChip(r.entity)}
               <span style="font-size:.75rem;color:var(--muted)">${esc(r.name)}</span>
               <span style="font-size:.68rem;color:var(--muted)">${r.patterns.length} pattern${r.patterns.length!==1?'s':''}</span>
               <span class="arr"></span>
             </summary>
             <div class="rec-body">
+              ${r.description ? `<p style="font-size:.78rem;color:var(--text);line-height:1.5;margin:4px 0 12px 0">${esc(r.description)}</p>` : ''}
               <table>
                 <thead><tr><th>Pattern</th><th>Score</th><th>Regex</th></tr></thead>
                 <tbody>${r.patterns.map(p=>`<tr>
-                  <td class="mono" style="white-space:nowrap">${esc(p.name)}</td>
-                  <td>${scorePill(p.score)}</td>
+                  <td class="mono" style="white-space:nowrap;vertical-align:top">${esc(p.name)}${renderPatternExamples(p)}</td>
+                  <td style="vertical-align:top">${scorePill(p.score)}</td>
                   <td class="rx">${esc(p.regex)}</td>
                 </tr>`).join('')}</tbody>
               </table>
               ${r.context?.length ? `<div style="margin-top:10px;font-size:.72rem;color:var(--muted)">Context: ${r.context.map(c=>`<span class="et" style="font-size:.65rem">${esc(c)}</span>`).join(' ')}</div>` : ''}
+              <div style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,.06)">
+                <div style="font-size:.7rem;color:var(--muted);margin-bottom:4px">Quick test &mdash; does <span class="mono">${esc(r.entity)}</span> fire on this text?</div>
+                <div style="display:flex;gap:6px;align-items:center">
+                  <input type="text" id="rec-in-${idx}" placeholder="Paste a test snippet..."
+                         style="flex:1;font-size:.75rem;padding:5px 8px"
+                         onkeydown="if(event.key==='Enter'){recognizerTest('${esc(r.entity)}','rec-in-${idx}','rec-out-${idx}')}">
+                  <button class="btn" style="padding:4px 10px;font-size:.72rem"
+                          onclick="recognizerTest('${esc(r.entity)}','rec-in-${idx}','rec-out-${idx}')">Test</button>
+                </div>
+                <div id="rec-out-${idx}" style="margin-top:6px;font-size:.72rem;min-height:1.2em"></div>
+              </div>
             </div>
           </details>`).join('')}
       </div>`;
 
+    // -- PRESIDIO BUILT-INS (enriched: description) -------------------------
     const builtinHtml = builtins.length ? `
       <p class="rules-h">Presidio Built-ins <small style="font-weight:400;color:var(--muted)">(${builtins.length})</small></p>
-      <div class="card">
-        <table>
-          <thead><tr><th>Entity</th><th>Context Words</th></tr></thead>
-          <tbody>${builtins.map(b=>`<tr>
-            <td><span class="et">${esc(b.entity)}</span></td>
-            <td style="font-size:.72rem;color:var(--muted)">${(b.context||[]).join(', ')||'—'}</td>
-          </tr>`).join('')}</tbody>
-        </table>
+      <div style="margin-bottom:24px">
+        ${builtins.map((b,idx) => `
+          <details class="rec" style="margin-bottom:6px">
+            <summary>
+              ${entityChip(b.entity)}
+              <span style="font-size:.68rem;color:var(--muted)">${(b.context||[]).length} context word${(b.context||[]).length!==1?'s':''}</span>
+              <span class="arr"></span>
+            </summary>
+            <div class="rec-body">
+              ${b.description ? `<p style="font-size:.78rem;color:var(--text);line-height:1.5;margin:4px 0 12px 0">${esc(b.description)}</p>` : ''}
+              ${b.context?.length ? `<div style="font-size:.72rem;color:var(--muted)">Context: ${b.context.map(c=>`<span class="et" style="font-size:.65rem">${esc(c)}</span>`).join(' ')}</div>` : ''}
+              <div style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,.06)">
+                <div style="font-size:.7rem;color:var(--muted);margin-bottom:4px">Quick test &mdash; does <span class="mono">${esc(b.entity)}</span> fire on this text?</div>
+                <div style="display:flex;gap:6px;align-items:center">
+                  <input type="text" id="bi-in-${idx}" placeholder="Paste a test snippet..."
+                         style="flex:1;font-size:.75rem;padding:5px 8px"
+                         onkeydown="if(event.key==='Enter'){recognizerTest('${esc(b.entity)}','bi-in-${idx}','bi-out-${idx}')}">
+                  <button class="btn" style="padding:4px 10px;font-size:.72rem"
+                          onclick="recognizerTest('${esc(b.entity)}','bi-in-${idx}','bi-out-${idx}')">Test</button>
+                </div>
+                <div id="bi-out-${idx}" style="margin-top:6px;font-size:.72rem;min-height:1.2em"></div>
+              </div>
+            </div>
+          </details>`).join('')}
       </div>` : '';
 
-    out('rules-content', polHtml + customHtml + builtinHtml);
+    // -- SCHEMAS (new section) ---------------------------------------------
+    const schemaHtml = schemas.length ? `
+      <p class="rules-h">Schemas <small style="font-weight:400;color:var(--muted)">(${schemas.length})</small></p>
+      <div style="margin-bottom:24px">
+        ${schemas.map(s => `
+          <details class="rec" style="margin-bottom:6px">
+            <summary>
+              <span class="et">${esc(s.name)}</span>
+              <span style="font-size:.68rem;color:var(--muted)">${s.field_count} field${s.field_count!==1?'s':''}</span>
+              <span class="policy-mode" style="font-size:.62rem">${esc(s.default_mode)}</span>
+              <span class="arr"></span>
+            </summary>
+            <div class="rec-body">
+              ${s.description ? `<p style="font-size:.78rem;color:var(--text);line-height:1.5;margin:4px 0 12px 0">${esc(s.description)}</p>` : ''}
+              <table>
+                <thead><tr><th>Field</th><th>Entity hint</th></tr></thead>
+                <tbody>${Object.entries(s.fields||{}).map(([f,e])=>`<tr>
+                  <td class="mono" style="font-size:.72rem">${esc(f)}</td>
+                  <td>${entityChip(e)}</td>
+                </tr>`).join('')}</tbody>
+              </table>
+            </div>
+          </details>`).join('')}
+      </div>` : '';
+
+    // -- ENTITIES (new section, every entity-type drill-in) ----------------
+    const treatmentBadge = (t) => {
+      const cls = t === 'block' ? 'rb rCRITICAL'
+                : t === 'pass-through' ? 'rb rLOW'
+                : t === 'exclude-any' ? 'rb rCRITICAL'
+                : 'rb rMEDIUM';
+      return `<span class="${cls}" style="font-size:.6rem">${esc(t)}</span>`;
+    };
+    const sortedEntities = [...entities].sort((a,b) => {
+      if (a.source !== b.source) return a.source === 'custom' ? -1 : 1;
+      return a.entity.localeCompare(b.entity);
+    });
+    const entityHtml = sortedEntities.length ? `
+      <p class="rules-h">Entities <small style="font-weight:400;color:var(--muted)">(${sortedEntities.length})</small></p>
+      <div style="margin-bottom:24px">
+        ${sortedEntities.map(e => `
+          <details class="rec entity-card" id="ent-${esc(e.entity)}" style="margin-bottom:6px">
+            <summary>
+              <span class="et">${esc(e.entity)}</span>
+              <span class="rb r${esc(e.risk_level)}" style="font-size:.6rem">${esc(e.risk_level)}</span>
+              <span style="font-size:.68rem;color:var(--muted)">${e.source}${e.recognizer ? ' &middot; '+esc(e.recognizer) : ''}</span>
+              <span class="arr"></span>
+            </summary>
+            <div class="rec-body">
+              ${e.description ? `<p style="font-size:.78rem;color:var(--text);line-height:1.5;margin:4px 0 12px 0">${esc(e.description)}</p>` : ''}
+              <div style="margin-bottom:12px">
+                <div style="font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Policy treatment</div>
+                <table>
+                  <thead><tr><th>Policy</th><th>Treatment</th></tr></thead>
+                  <tbody>${e.policy_treatment.map(pt=>`<tr>
+                    <td class="mono" style="font-size:.72rem">${esc(pt.policy)}</td>
+                    <td>${treatmentBadge(pt.treatment)}</td>
+                  </tr>`).join('')}</tbody>
+                </table>
+              </div>
+              ${e.field_hints?.length ? `
+                <div>
+                  <div style="font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Field hints across schemas (${e.field_hints.length})</div>
+                  <table>
+                    <thead><tr><th>Schema</th><th>Field</th></tr></thead>
+                    <tbody>${e.field_hints.map(fh=>`<tr>
+                      <td class="mono" style="font-size:.72rem">${esc(fh.schema)}</td>
+                      <td class="mono" style="font-size:.72rem">${esc(fh.field)}</td>
+                    </tr>`).join('')}</tbody>
+                  </table>
+                </div>` : `<div style="font-size:.7rem;color:var(--muted);font-style:italic">No schemas reference this entity by field hint.</div>`}
+            </div>
+          </details>`).join('')}
+      </div>` : '';
+
+    out('rules-content', polHtml + customHtml + builtinHtml + schemaHtml + entityHtml);
+
+    // Wire entity chips after content is in the DOM.
+    document.querySelectorAll('.entity-chip').forEach(el => {
+      el.addEventListener('click', () => jumpToEntity(el.dataset.entity));
+    });
+
     _rulesLoaded = true;
   } catch(e) { out('rules-content', `<div class="err">Failed to load rules: ${esc(e.message)}</div>`); }
 }

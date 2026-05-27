@@ -297,6 +297,118 @@ class TestPoliciesContract:
 
 
 # ---------------------------------------------------------------------------
+# Rules-page enrichment contracts — pinned 2026-05-27
+#
+# The Rules page in templates/ui.html depends on these fields:
+#   /api/v1/recognizers:
+#     - custom[].description     (prose)
+#     - custom[].patterns[].examples / .no_matches (lists of strings)
+#     - presidio_builtins[].description (prose)
+#   /api/v1/entities:
+#     - details[] (list of per-entity blocks)
+#     - details[].description / .risk_level / .source / .field_hints / .policy_treatment
+#
+# If any of these fields are removed or renamed, the Rules tab loses content
+# silently. These tests catch that before the UI does.
+# ---------------------------------------------------------------------------
+
+
+class TestRecognizerEnrichmentContract:
+    def test_custom_recognizer_has_description(self, client):
+        data = client.get("/api/v1/recognizers").get_json()
+        for r in data.get("custom", []):
+            assert "description" in r, (
+                f"Custom recognizer {r.get('entity')} missing 'description' field. "
+                "Rules-page prose blurb depends on it."
+            )
+
+    def test_pattern_examples_field_present(self, client):
+        data = client.get("/api/v1/recognizers").get_json()
+        for r in data.get("custom", []):
+            for p in r.get("patterns", []):
+                assert "examples"   in p, f"Pattern '{r['entity']}::{p.get('name')}' missing 'examples' list"
+                assert "no_matches" in p, f"Pattern '{r['entity']}::{p.get('name')}' missing 'no_matches' list"
+                assert isinstance(p["examples"],   list)
+                assert isinstance(p["no_matches"], list)
+
+    def test_builtin_recognizer_has_description(self, client):
+        data = client.get("/api/v1/recognizers").get_json()
+        for b in data.get("presidio_builtins", []):
+            assert "description" in b, (
+                f"Built-in recognizer {b.get('entity')} missing 'description' field."
+            )
+
+    def test_student_id_description_mentions_redesign(self, client):
+        """
+        The STUDENT_ID description specifically should explain the 5-9 digit
+        range and the letter-prefix branch — if someone "cleans up" the prose
+        and drops these details, it should be a conscious choice, not a
+        silent loss.
+        """
+        data = client.get("/api/v1/recognizers").get_json()
+        sid = next((r for r in data["custom"] if r["entity"] == "STUDENT_ID"), None)
+        assert sid is not None
+        desc = sid["description"].lower()
+        assert "5" in desc and "9" in desc, "STUDENT_ID description should mention the 5-9 digit range"
+        assert "letter" in desc or "prefix" in desc, "STUDENT_ID description should mention letter-prefixed external IDs"
+
+
+class TestEntitiesEnrichmentContract:
+    DETAIL_KEYS = {
+        "entity", "source", "description", "risk_level",
+        "recognizer", "field_hints", "policy_treatment",
+    }
+
+    def test_entities_has_details_list(self, client):
+        data = client.get("/api/v1/entities").get_json()
+        assert "details" in data, (
+            "/api/v1/entities is missing the 'details' list. Rules-page "
+            "Entities section will be empty."
+        )
+        assert isinstance(data["details"], list)
+        assert len(data["details"]) >= 10, "Expected at least 10 entity detail blocks"
+
+    def test_entity_detail_shape(self, client):
+        data = client.get("/api/v1/entities").get_json()
+        for d in data["details"]:
+            missing = self.DETAIL_KEYS - set(d.keys())
+            assert not missing, f"Entity {d.get('entity')} missing detail keys: {missing}"
+            assert d["source"] in ("custom", "presidio"), (
+                f"Entity {d['entity']} has unexpected source '{d['source']}'"
+            )
+
+    def test_student_id_field_hints_non_empty(self, client):
+        """
+        STUDENT_ID is referenced by ~18 field hints across the built-in schemas
+        (PIDM, SPRIDEN_ID, bannerId, colleaguePersonId, etc.). If the field
+        hint reverse index drops to zero, the index aggregation broke.
+        """
+        data = client.get("/api/v1/entities").get_json()
+        sid = next((d for d in data["details"] if d["entity"] == "STUDENT_ID"), None)
+        assert sid is not None
+        assert len(sid["field_hints"]) >= 5, (
+            f"STUDENT_ID has only {len(sid['field_hints'])} field hints. "
+            "The reverse field-hint index aggregator likely broke."
+        )
+        for fh in sid["field_hints"]:
+            assert "schema" in fh and "field" in fh
+
+    def test_policy_treatment_covers_every_built_in_policy(self, client):
+        """
+        Every entity block must have a policy_treatment row for every built-in
+        policy. If a new policy is added in policy.py, this aggregator must
+        also produce a row for it.
+        """
+        data = client.get("/api/v1/entities").get_json()
+        pol_count = client.get("/api/v1/policies").get_json()["count"]
+        for d in data["details"]:
+            assert len(d["policy_treatment"]) == pol_count, (
+                f"Entity {d['entity']} has {len(d['policy_treatment'])} policy "
+                f"treatment rows but there are {pol_count} built-in policies."
+            )
+
+
+# ---------------------------------------------------------------------------
 # /api/v1/policy/apply response shape — pinned 2026-05-27
 #
 # The UI ("Scan & Sanitize" tab) and downstream callers (Conductor workers,
