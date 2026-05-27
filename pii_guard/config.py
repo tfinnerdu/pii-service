@@ -90,7 +90,6 @@ BUILT_IN_SCHEMA_PROFILES: dict[str, dict] = {
         "field_hints": {
             "id":                       "STUDENT_ID",
             "colleaguePersonId":        "STUDENT_ID",
-            "bannerId":                 "STUDENT_ID",
             "lastName":                 "PERSON",
             "firstName":                "PERSON",
             "fullName":                 "PERSON",
@@ -136,7 +135,6 @@ BUILT_IN_SCHEMA_PROFILES: dict[str, dict] = {
             "phoneNumber":             "PHONE_NUMBER",
             "dateOfBirth":             "DATE_OF_BIRTH",
             "colleaguePersonId":       "STUDENT_ID",
-            "bannerId":                "STUDENT_ID",
             "gender":                  "NRP",
             "race":                    "NRP",
             "ethnicity":               "NRP",

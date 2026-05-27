@@ -277,7 +277,7 @@ class PiiGuard:
         field_context_hints maps field names to entity type strings (e.g. {"SPBPERS_SSN": "US_SSN"}).
         When provided, context words for the hinted entity type are passed to Presidio's
         analyzer to boost pattern scores for that field — critical for low-confidence patterns
-        like banner_numeric (0.35) which won't fire without context.
+        like the STUDENT_ID numeric pattern (0.3) which won't fire without context.
         """
         from .recognizers import get_context_for_entity
 

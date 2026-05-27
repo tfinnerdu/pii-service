@@ -379,9 +379,9 @@ class TestEntitiesEnrichmentContract:
 
     def test_student_id_field_hints_non_empty(self, client):
         """
-        STUDENT_ID is referenced by ~18 field hints across the built-in schemas
-        (PIDM, SPRIDEN_ID, bannerId, colleaguePersonId, etc.). If the field
-        hint reverse index drops to zero, the index aggregation broke.
+        STUDENT_ID is referenced by many field hints across the built-in schemas
+        (id, colleaguePersonId, SPRIDEN_ID, sis_user_id, Worker_ID, etc.). If
+        the field-hint reverse index drops to zero, the index aggregation broke.
         """
         data = client.get("/api/v1/entities").get_json()
         sid = next((d for d in data["details"] if d["entity"] == "STUDENT_ID"), None)

@@ -119,7 +119,7 @@ See [Named Policies](#named-policies) for details on each policy.
 ### Correlation ID (optional text field)
 
 **How to use:** Enter any string you use to identify this request in your own system
-(e.g., a Banner PIDM, a workflow run ID, a ticket number). Leave blank if not needed.
+(e.g., a Colleague person ID, a workflow run ID, a ticket number). Leave blank if not needed.
 
 **What it does:** The correlation ID is echoed back in the API response and recorded in
 the audit log. Use it to link pii-service events to records in your own system without

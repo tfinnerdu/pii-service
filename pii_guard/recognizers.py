@@ -81,7 +81,7 @@ _RECOGNIZER_SPECS = [
             # Bare numeric is the canonical Doane form (7 digits, often with leading
             # zeros). 5-9 covers Doane plus typical peer-institution and external-
             # system variations. Low base score; relies on context boost from words
-            # like "id", "student", "banner", etc. to clear the threshold.
+            # like "id", "student", "colleague", etc. to clear the threshold.
             ("numeric",         r"\b\d{5,9}\b",            0.3),
             # Single-letter-prefixed alphanumeric appears in feeds from external SIS
             # systems and some peer institutions (S1234567, A1234567). Doane's own
@@ -89,8 +89,9 @@ _RECOGNIZER_SPECS = [
             ("letter_prefixed", r"\b[A-Z]\d{5,9}\b",       0.5),
         ],
         "context": [
-            "student", "student id", "id", "banner", "banner id",
-            "colleague", "colleague id", "sis", "person id", "person",
+            "student", "student id", "id",
+            "colleague", "colleague id", "colleague person id",
+            "sis", "person id", "person",
             "account", "enrollee", "record id", "external id",
         ],
     },

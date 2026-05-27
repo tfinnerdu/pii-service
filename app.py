@@ -1802,7 +1802,7 @@ def scan_ocr():
         "mode": "mask",
         "low_confidence_threshold": 70.0,
         "exclude_entity_types": [],
-        "correlation_id": "banner-pidm-123456"
+        "correlation_id": "colleague-personid-123456"
       }
 
     Pages with confidence below low_confidence_threshold get low_confidence_warning=true,

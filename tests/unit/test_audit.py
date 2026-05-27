@@ -98,7 +98,7 @@ class TestAuditStats:
     def test_emit_with_correlation_id(self):
         """correlation_id (opaque caller-supplied GUID) must be accepted without error."""
         before = audit.get_stats()["total_requests"]
-        _emit({"correlation_id": "banner-pidm-1234567"})
+        _emit({"correlation_id": "colleague-personid-1234567"})
         assert audit.get_stats()["total_requests"] == before + 1
 
     def test_emit_caller_name_none_accepted(self):
@@ -165,7 +165,7 @@ class TestAuditEvent:
         assert _emit({"outcome": "partial"}).outcome == "partial"
 
     def test_explicit_correlation_id_is_threaded(self):
-        assert _emit({"correlation_id": "banner-pidm-1234567"}).correlation_id == "banner-pidm-1234567"
+        assert _emit({"correlation_id": "colleague-personid-1234567"}).correlation_id == "colleague-personid-1234567"
 
     def test_correlation_id_auto_generated_when_absent(self):
         """Absent correlation_id mints a fresh non-empty uuid via the default factory."""

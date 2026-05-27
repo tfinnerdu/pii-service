@@ -55,7 +55,7 @@ RECOGNIZER_DESCRIPTIONS: dict[str, str] = {
         "canonical 7-digit form (leading zeros allowed) plus peer-institution "
         "variations. Also catches single-letter-prefixed external-system IDs "
         "(S1234567, A1234567) seen in feeds from non-Doane SIS systems. Low "
-        "base score; context words like 'id', 'student', 'banner', 'colleague' "
+        "base score; context words like 'id', 'student', 'colleague', 'person id' "
         "boost detection over the threshold."
     ),
     "DOANE_EMAIL": (
