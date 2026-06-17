@@ -87,9 +87,25 @@ _RECOGNIZER_SPECS = [
             # systems and some peer institutions (S1234567, A1234567). Doane's own
             # IDs do NOT use a letter prefix — this branch only fires on imported data.
             ("letter_prefixed", r"\b[A-Z]\d{5,9}\b",       0.5),
+            # Id-claimed: catches numeric IDs preceded by an explicit "id" /
+            # "student id" / "colleague id" / "person id" anchor phrase. This
+            # bypasses Presidio's NLP-based context boost, which fails on lowercase
+            # "id" because spaCy tokenizes it as two tokens ("i" and "d") and the
+            # enhancer's lemma search can't find it. Variable-width lookbehind so
+            # the match span stays on just the digits — works in Presidio's `regex`
+            # backend; Python's built-in `re` would reject it.
+            ("id_claimed",
+             r"(?i)(?<=\b(?:student\s+id|colleague\s+id|person\s+id|sis\s+id|\bid)\b"
+             r"[^\d\n]{0,8})"
+             r"\d{5,9}\b",
+             0.85),
         ],
         "context": [
-            "student", "student id", "id",
+            # Multi-word phrases are safer against Presidio's default substring
+            # matching mode — single-word "id" would match inside "kid", "Madrid",
+            # etc. The id_claimed pattern above handles the explicit "id <digits>"
+            # case via lookbehind, bypassing context-boost entirely.
+            "student", "student id",
             "colleague", "colleague id", "colleague person id",
             "sis", "person id", "person",
             "account", "enrollee", "record id", "external id",

@@ -106,6 +106,46 @@ class TestStudentIdPatterns:
         pattern_names = {p[0] for p in student_id["patterns"]}
         assert "colleague_at" not in pattern_names
 
+    def test_id_claimed_pattern_present(self):
+        """
+        The id_claimed pattern exists specifically because spaCy tokenizes
+        lowercase 'id' as two tokens ('i' and 'd'), which breaks Presidio's
+        context-aware enhancer's ability to find 'id' as a context word for
+        STUDENT_ID. id_claimed uses a variable-width lookbehind to anchor on
+        the literal "id" / "student id" / "colleague id" / etc. phrase
+        directly, bypassing the NLP layer. If this pattern is removed,
+        lowercase "id 12345678" stops being detected.
+        """
+        from pii_guard.recognizers import _RECOGNIZER_SPECS
+        sid = next(s for s in _RECOGNIZER_SPECS if s["entity"] == "STUDENT_ID")
+        names = {p[0] for p in sid["patterns"]}
+        assert "id_claimed" in names, (
+            "id_claimed pattern removed. STUDENT_ID will no longer fire on "
+            "lowercase 'id <digits>' input because spaCy's tokenizer splits "
+            "lowercase 'id' into ['i', 'd'] and the context-aware enhancer "
+            "can't find 'id' in surrounding tokens."
+        )
+
+    def test_id_alone_not_in_student_id_context(self):
+        """
+        Single-word 'id' was removed from the STUDENT_ID context list because
+        Presidio's default context_matching_mode is 'substring' — 'id' as a
+        context word would match inside 'kid', 'lid', 'Madrid', 'candid', etc.
+        and produce a false-positive context boost on bare 5-9 digit numbers
+        anywhere those substrings appeared in surrounding text. The id_claimed
+        pattern handles the legitimate 'id <digits>' case via lookbehind.
+        """
+        from pii_guard.recognizers import _RECOGNIZER_SPECS
+        sid = next(s for s in _RECOGNIZER_SPECS if s["entity"] == "STUDENT_ID")
+        assert "id" not in sid["context"], (
+            "Single-word 'id' re-added to STUDENT_ID context. With Presidio's "
+            "default substring matching mode this will substring-match inside "
+            "'kid', 'Madrid', etc. and produce false positives on any nearby "
+            "5-9 digit number. Use multi-word phrases ('student id', "
+            "'colleague id') for context boost; rely on the id_claimed "
+            "pattern's lookbehind for the explicit-anchor case."
+        )
+
     def test_colleague_id_recognizer_removed(self):
         """
         Documents the v2 change: COLLEAGUE_ID was a separate recognizer with
