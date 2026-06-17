@@ -65,6 +65,31 @@ BUILT_IN_POLICIES: dict[str, PiiPolicy] = {
         warn_at_risk=RiskLevel.HIGH,
     ),
 
+    "ai_prompt_chatbot": PiiPolicy(
+        name="ai_prompt_chatbot",
+        description=(
+            "Variant of ai_prompt tuned for conversational chatbot use. "
+            "Allows PERSON names to pass through so the bot can address the "
+            "user naturally, while keeping the same hard blocks on SSN, "
+            "financial account numbers, and immigration status. "
+            "Use this only for interactive chatbot prompts — for non-"
+            "conversational AI calls (RAG ingest, batch summarization, "
+            "Conductor workers), stick with ai_prompt. "
+            "Caveat: passing a name plus enough context can still re-"
+            "identify the subject even when other PII is redacted; if the "
+            "downstream model provider is outside your data-handling scope, "
+            "weigh that before enabling this policy on a new caller."
+        ),
+        block_entity_types=[
+            "US_SSN", "CREDIT_CARD", "US_BANK_NUMBER", "US_ITIN",
+            "US_PASSPORT", "US_DRIVER_LICENSE", "IBAN_CODE",
+            "FINANCIAL_ACCOUNT", "IMMIGRATION_STATUS", "CRYPTO",
+        ],
+        pass_through_entity_types=["PERSON", "DATE_TIME", "URL", "IP_ADDRESS"],
+        default_mode=SanitizeMode.MASK,
+        warn_at_risk=RiskLevel.HIGH,
+    ),
+
     "embedding": PiiPolicy(
         name="embedding",
         description=(

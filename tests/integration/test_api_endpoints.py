@@ -285,6 +285,57 @@ class TestPolicyEndpoint:
         assert "results" in data
         assert len(data["results"]) == 2
 
+    def test_chatbot_policy_lets_person_through(self, client):
+        # The reason ai_prompt_chatbot exists: a conversational bot can
+        # address the user by name. The hard-block list (SSN etc.) is
+        # unchanged from ai_prompt; only PERSON pass-through differs.
+        data = client.post("/api/v1/policy/apply", json={
+            "policy": "ai_prompt_chatbot",
+            "text":   "Hi, my name is John Smith.",
+        }).get_json()
+        assert data["passed"] is True, (
+            "ai_prompt_chatbot must not block plain PERSON-only input. "
+            "If it does, PERSON drifted out of pass_through_entity_types."
+        )
+        assert "John Smith" in (data.get("sanitized_text") or ""), (
+            "ai_prompt_chatbot must let PERSON pass through unchanged."
+        )
+
+    def test_chatbot_policy_still_blocks_ssn(self, client):
+        # ai_prompt_chatbot loosens names, not safety. SSN still must block.
+        data = client.post("/api/v1/policy/apply", json={
+            "policy": "ai_prompt_chatbot",
+            "text":   "John Smith SSN 123-45-6789",
+        }).get_json()
+        assert data["passed"] is False
+        assert data["action_taken"] == "excluded"
+        assert "US_SSN" in data.get("blocked_entities", []), (
+            "ai_prompt_chatbot must still block US_SSN. If this fails, the "
+            "policy was edited in a way that removed SSN from block_entity_types."
+        )
+
+    def test_chatbot_policy_block_list_matches_ai_prompt(self, client):
+        """
+        ai_prompt_chatbot is intentionally a sibling of ai_prompt, identical
+        except for PERSON pass-through. If someone "cleans up" duplicate
+        block lists and the two diverge silently, the chatbot policy could
+        end up permissive on financial PII without anyone noticing.
+        Pinning the equivalence here is the tripwire.
+        """
+        from pii_guard.policy import BUILT_IN_POLICIES
+        a = BUILT_IN_POLICIES["ai_prompt"]
+        b = BUILT_IN_POLICIES["ai_prompt_chatbot"]
+        assert set(a.block_entity_types) == set(b.block_entity_types), (
+            "ai_prompt and ai_prompt_chatbot block lists diverged. The chatbot "
+            "variant is supposed to differ ONLY in pass_through_entity_types "
+            "(adding PERSON). If a divergent block list is intentional, "
+            "update this test in the same commit so the choice is auditable."
+        )
+        assert set(b.pass_through_entity_types) - set(a.pass_through_entity_types) == {"PERSON"}, (
+            "ai_prompt_chatbot should add exactly PERSON to ai_prompt's "
+            "pass-through set, nothing more."
+        )
+
 
 # ---------------------------------------------------------------------------
 # File upload (CSV)

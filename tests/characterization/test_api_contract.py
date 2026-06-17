@@ -269,8 +269,8 @@ class TestPoliciesContract:
         "block_entity_types", "pass_through_entity_types", "exclude_any_pii"
     }
     REQUIRED_POLICY_NAMES = {
-        "ai_prompt", "embedding", "log_safe", "export_internal",
-        "export_external", "ferpa_strict", "analytics"
+        "ai_prompt", "ai_prompt_chatbot", "embedding", "log_safe",
+        "export_internal", "export_external", "ferpa_strict", "analytics",
     }
 
     def test_policies_shape(self, client):
