@@ -59,8 +59,8 @@ components:
         - type: object
           properties:
             recognizer:   { type: string, example: "StudentIdRecognizer" }
-            pattern_name: { type: string, nullable: true, example: "doane_d_prefix" }
-            pattern:      { type: string, nullable: true, example: "\\bD\\d{7}\\b" }
+            pattern_name: { type: string, nullable: true, example: "id_claimed" }
+            pattern:      { type: string, nullable: true, example: "\\b\\d{5,9}\\b" }
             context_words:
               type: array
               items: { type: string }

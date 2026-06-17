@@ -31,16 +31,18 @@ spec:
               value: "production"
             - name: PII_USE_SPACY
               value: "true"
+            # camelCase Secret keys -> SCREAMING_SNAKE env names the app reads.
+            # Footgun (doane-standards.md): name/key indent UNDER secretKeyRef.
             - name: PII_SCORE_THRESHOLD
               valueFrom:
                 secretKeyRef:
-                  name: pii-service-secret
-                  key: PII_SCORE_THRESHOLD
+                  name: pii-service-config
+                  key: piiScoreThreshold
             - name: API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: pii-service-secret
-                  key: API_KEY
+                  name: pii-service-config
+                  key: apiKey
           resources:
             requests:
               memory: "768Mi"    # spaCy en_core_web_lg is ~750MB in memory
@@ -120,16 +122,16 @@ spec:
 
 ---
 # Secret manifest — values must be applied separately (never commit real values)
-# kubectl create secret generic pii-service-secret \
+# kubectl create secret generic pii-service-config \
 #   --namespace=prod \
-#   --from-literal=PII_SCORE_THRESHOLD=0.5 \
-#   --from-literal=API_KEY=<generated-key>
+#   --from-literal=piiScoreThreshold=0.5 \
+#   --from-literal=apiKey=<generated-key>
 apiVersion: v1
 kind: Secret
 metadata:
-  name: pii-service-secret
+  name: pii-service-config
   namespace: prod
 type: Opaque
 stringData:
-  PII_SCORE_THRESHOLD: "0.5"
-  API_KEY: "REPLACE_WITH_REAL_KEY"
+  piiScoreThreshold: "0.5"
+  apiKey: "REPLACE_WITH_REAL_KEY"

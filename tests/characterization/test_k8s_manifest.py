@@ -128,6 +128,30 @@ class TestDeploymentManifest:
                         "This is the classic secretKeyRef indentation footgun."
                     )
 
+    def test_secret_key_names_are_camelcase(self, deployment_doc):
+        """
+        Doane K8s convention (visible across n8n, dlm, follett-invoice manifests):
+        Secret KEYS are camelCase; env names that read them are SCREAMING_SNAKE.
+        Mixing the two — using SCREAMING_SNAKE for both — works mechanically but
+        breaks consistency with how every other Doane service applies its secrets.
+        """
+        import re
+        screaming_snake = re.compile(r"^[A-Z][A-Z0-9_]*$")
+        containers = deployment_doc["spec"]["template"]["spec"]["containers"]
+        for container in containers:
+            for env in container.get("env", []):
+                ref = (env.get("valueFrom") or {}).get("secretKeyRef") or {}
+                key = ref.get("key")
+                if not key:
+                    continue
+                assert not screaming_snake.match(key), (
+                    f"Secret key '{key}' for env '{env.get('name')}' is SCREAMING_SNAKE. "
+                    "Doane convention: secret keys are camelCase, env names are "
+                    "SCREAMING_SNAKE. Example: env name=PII_SCORE_THRESHOLD, "
+                    "secret key=piiScoreThreshold. Update both the deployment env "
+                    "block and the kubectl create secret command in the same edit."
+                )
+
 
 # ---------------------------------------------------------------------------
 # Ingress required fields — pinned 2025-05
