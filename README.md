@@ -7,7 +7,7 @@ Built on [Microsoft Presidio](https://microsoft.github.io/presidio/) — all pro
 
 ## What it does
 
-- Detects 35+ PII entity types including education-sector types (Banner student IDs, FAFSA IDs, FERPA markers, Title IX case IDs, IRB protocol numbers, financial aid awards, student account IDs, immigration status, disability accommodations, veteran status)
+- Detects 35+ PII entity types including education-sector types (Colleague / institutional student IDs, FAFSA IDs, FERPA markers, Title IX case IDs, IRB protocol numbers, financial aid awards, student account IDs, immigration status, disability accommodations, veteran status)
 - Sanitizes text via mask, redact, pseudonymize, or exclude modes
 - Provides AI preflight checks before sending data to external LLMs
 - Ingests CSV, TSV, JSON, JSONL, TXT, PDF, DOCX, and XLSX files
@@ -45,7 +45,7 @@ Service starts on **port 5900** by default. Visit `http://localhost:5900/api/v1/
 | GET | `/metrics` | Prometheus text format telemetry — no auth |
 | GET | `/api/v1/entities` | All detectable entity types |
 | GET | `/api/v1/policies` | Named policy catalog |
-| GET | `/api/v1/schemas` | ERP schema profiles (Banner, Colleague, Salesforce, Ethos, Workday, ServiceNow, Slate, Starfish, Canvas, Microsoft Graph, n8n) |
+| GET | `/api/v1/schemas` | ERP schema profiles (Colleague, Ethos, Salesforce, Workday, ServiceNow, Slate, Starfish, Canvas, Microsoft Graph, n8n, Banner) |
 | GET | `/api/v1/stats` | In-process telemetry snapshot |
 | GET | `/api/v1/keys` | List active named key names (never key values) |
 | GET | `/api/v1/jobs/<id>` | Async job status — 501 stub (Redis/RQ deferred) |
@@ -162,17 +162,17 @@ curl -X POST http://localhost:5900/api/v1/process \
   -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "schema": "banner_student",
+    "schema": "colleague_person",
     "record": {
-      "SPRIDEN_LAST_NAME": "Smith",
-      "SPBPERS_SSN": "123-45-6789",
-      "GPA": 3.5
+      "lastName": "Smith",
+      "socialSecurityNumber": "123-45-6789",
+      "gpa": 3.5
     },
     "mode": "mask"
   }'
 ```
 
-Built-in profiles: `banner_student`, `colleague_person`, `salesforce_contact`, `ethos_person`, `n8n_generic`, `conductor_ethos`, `workday_hr`, `servicenow_itsm`, `slate_crm`, `starfish_early_alert`, `canvas_lms`, `microsoft_graph`.
+Built-in profiles: `colleague_person`, `ethos_person`, `salesforce_contact`, `conductor_ethos`, `workday_hr`, `servicenow_itsm`, `slate_crm`, `starfish_early_alert`, `canvas_lms`, `microsoft_graph`, `n8n_generic`, `banner_student`.
 
 Custom profiles can be added via `PII_CONFIG_FILE`.
 

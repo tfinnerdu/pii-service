@@ -18,7 +18,7 @@ Resolving them is a deliberate design decision, deferred pending sign-off.
 
 | Location | Hardcoded value | Institution assumption |
 |---|---|---|
-| `recognizers.py:81` | `doane_d_prefix` → `\bD\d{7}\b` (`STUDENT_ID`) | Doane's Banner student-ID format (D + 7 digits) |
+| `recognizers.py:STUDENT_ID` | `numeric` → `\b\d{5,9}\b` and context vocabulary | Range fits Doane's Colleague 7-digit form plus common peer-institution variants. Move both the range and the context list to a tenant config for cleaner per-institution overrides. |
 | `recognizers.py:99` | `DOANE_EMAIL` → `@doane\.edu` | Doane's email domain |
 | `recognizers.py:61-63` | `STUDENT_ACCOUNT_ID` → `TN-` / `CN-` / `SAR-` | TouchNet / CashNet vendor choice |
 

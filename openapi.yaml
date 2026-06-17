@@ -261,8 +261,8 @@ paths:
     get:
       summary: ERP/SIS schema profiles
       description: >
-        Built-in field mapping profiles for Banner, Colleague, Salesforce, Ethos, Workday,
-        ServiceNow, Slate, Starfish, Canvas, and Microsoft Graph.
+        Built-in field mapping profiles for Colleague, Ethos, Salesforce, Workday,
+        ServiceNow, Slate, Starfish, Canvas, Microsoft Graph, and Banner.
         Specify a profile in /api/v1/process to enable field-name-aware PII detection.
       tags: [Catalog]
       responses:
@@ -561,7 +561,7 @@ paths:
                 schema:
                   type: string
                   description: ERP schema profile name for field-hint-aware detection
-                  example: banner_student
+                  example: colleague_person
                 exclude_entity_types:
                   type: array
                   items: { type: string }

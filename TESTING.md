@@ -68,20 +68,20 @@ Hit `/api/v1/policies` — verify all 7 policies appear: `ai_prompt`, `embedding
 GET http://localhost:5900/api/v1/schemas
 ```
 
-Expected: 12 built-in profiles appear — `banner_student`, `colleague_person`, `salesforce_contact`,
-`ethos_person`, `n8n_generic`, `conductor_ethos`, `workday_hr`, `servicenow_itsm`, `slate_crm`,
-`starfish_early_alert`, `canvas_lms`, `microsoft_graph`. Each has `name`, `description`,
-`field_count`, `default_mode`, and `fields` map.
+Expected: 12 built-in profiles appear — `colleague_person`, `ethos_person`, `salesforce_contact`,
+`conductor_ethos`, `n8n_generic`, `workday_hr`, `servicenow_itsm`, `slate_crm`,
+`starfish_early_alert`, `canvas_lms`, `microsoft_graph`, `banner_student`. Each has `name`,
+`description`, `field_count`, `default_mode`, and `fields` map.
 
 ### §2.6 Generic process endpoint
 
 ```
 POST http://localhost:5900/api/v1/process
-Body: { "schema": "banner_student", "record": { "SPRIDEN_LAST_NAME": "Smith", "SPBPERS_SSN": "123-45-6789", "GPA": 3.5 }, "mode": "mask" }
+Body: { "schema": "colleague_person", "record": { "lastName": "Smith", "socialSecurityNumber": "123-45-6789", "gpa": 3.5 }, "mode": "mask" }
 ```
 
-Expected: `input_type: "record"`, `schema_applied: "banner_student"`, `sanitized_record.SPBPERS_SSN` contains `[US_SSN]`.
-GPA (non-string) should pass through unchanged.
+Expected: `input_type: "record"`, `schema_applied: "colleague_person"`, `sanitized_record.socialSecurityNumber` contains `[US_SSN]`.
+`gpa` (non-string) should pass through unchanged.
 
 ### §2.7 Deep health check
 
@@ -368,7 +368,7 @@ Expected: `correlation_id` key is absent from response (not null — completely 
 5. **Explain:** paste the same text. Expected: per-hit recognizer + pattern breakdown.
 6. **Policy:** pick `ferpa_strict`, run on any text with PII. Expected: EXCLUDED panel.
 7. **File Upload:** drag a small CSV. Expected: per-row results table.
-8. **Record / Schema:** paste a JSON record, pick `banner_student`. Expected:
+8. **Record / Schema:** paste a JSON record, pick `colleague_person`. Expected:
    original vs sanitized diff.
 9. **Rules:** switch to the tab. Expected: policies, custom recognizers, and
    Presidio built-ins render.

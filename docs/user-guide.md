@@ -261,7 +261,7 @@ by policy" badge if it was blocked.
 ## Tab: File Upload
 
 **Purpose:** Sanitize an entire file — CSV, TSV, JSON, JSONL, TXT, PDF, DOCX, or XLSX
-— row by row or page by page. Useful for preprocessing Banner/Colleague exports before
+— row by row or page by page. Useful for preprocessing Colleague (or other SIS) exports before
 analysis, or scrubbing uploaded documents before storage.
 
 ### File drop zone
@@ -326,7 +326,7 @@ reads, parses, sanitizes, and returns all rows in a single response.
 ## Tab: Record / Schema
 
 **Purpose:** Sanitize a single structured JSON record field by field, with optional
-schema-aware detection. Use this when your data comes from Banner, Colleague, Salesforce,
+schema-aware detection. Use this when your data comes from Colleague, Ethos, Salesforce,
 or another ERP and you want the service to understand field names as context clues.
 
 ### JSON record (input area)
@@ -349,19 +349,19 @@ fields (numbers, booleans, nulls) pass through unchanged.
 schema-agnostic detection.
 
 **What it does:** When a schema is selected, the service uses field name hints to boost
-detection confidence. For example, under the `banner_student` schema, a field named
-`SPBPERS_SSN` is treated as a strong signal for `US_SSN` even if the value alone would
-score below the confidence threshold.
+detection confidence. For example, under the `colleague_person` schema, a field named
+`socialSecurityNumber` is treated as a strong signal for `US_SSN` even if the value alone
+would score below the confidence threshold.
 
 **Available profiles:**
 
 | Profile | Use for |
 |---|---|
-| `banner_student` | Ellucian Banner student/person records |
 | `colleague_person` | Ellucian Colleague person records |
-| `salesforce_contact` | Salesforce Contact and Lead objects |
 | `ethos_person` | Ethos Integration person payloads |
+| `salesforce_contact` | Salesforce Contact and Lead objects |
 | `n8n_generic` | n8n workflow generic person payloads |
+| `banner_student` | Ellucian Banner student/person records (peer institutions on Banner) |
 | `conductor_ethos` | Conductor + Ethos person records |
 
 ### Mode (dropdown)
@@ -612,7 +612,7 @@ A single CRITICAL hit makes the whole text CRITICAL even if all other hits are L
 
 | Entity | Description | Risk |
 |---|---|---|
-| `STUDENT_ID` | 5–9 digit numeric institutional IDs (Doane's canonical 7-digit form with leading zeros, plus peer-institution variations) and single-letter-prefixed external-system IDs (`S1234567`, `A1234567`). Low base score; context words like "id", "student", "banner", "colleague" boost detection. | HIGH |
+| `STUDENT_ID` | 5–9 digit numeric institutional IDs (Doane's canonical 7-digit form with leading zeros, plus peer-institution variations) and single-letter-prefixed external-system IDs (`S1234567`, `A1234567`). Low base score; context words like "student id", "colleague id", "person id" boost detection, and an `id_claimed` lookbehind catches the explicit `"id <digits>"` form regardless of capitalization. | HIGH |
 | `DOANE_EMAIL` | `@doane.edu` addresses (tagged separately from generic email) | HIGH |
 | `DATE_OF_BIRTH` | Dates in DOB context (MM/DD/YYYY, YYYY-MM-DD, written month) | HIGH |
 | `FERPA_MARKER` | FERPA-protected record types: "GPA", "transcript", "financial aid", "academic probation", etc. | MEDIUM |
@@ -642,12 +642,12 @@ Use profiles via the Record / Schema tab in the UI or via `schema` in
 
 | Profile | Source system |
 |---|---|
-| `banner_student` | Ellucian Banner — SPRIDEN, SPBPERS, SGBSTDN tables |
 | `colleague_person` | Ellucian Colleague — person and student entity |
-| `salesforce_contact` | Salesforce Contact and Lead standard fields |
 | `ethos_person` | Ethos Integration person API payload |
-| `n8n_generic` | n8n workflow generic person data shape |
 | `conductor_ethos` | Conductor + Ethos combined person payload |
+| `salesforce_contact` | Salesforce Contact and Lead standard fields |
+| `n8n_generic` | n8n workflow generic person data shape |
+| `banner_student` | Ellucian Banner — SPRIDEN, SPBPERS, SGBSTDN tables (peer institutions on Banner) |
 
 Custom profiles can be added via a `PII_CONFIG_FILE` JSON file without restarting.
 See `POST /api/v1/schemas` for the current profile list.
@@ -713,14 +713,14 @@ Content-Type: application/json
 { "policy": "ai_prompt", "text": "Advising notes for student D1234567..." }
 ```
 
-**Process a Banner record:**
+**Process a Colleague record:**
 ```http
 POST /api/v1/process
 Content-Type: application/json
 
 {
-  "record": { "SPRIDEN_LAST_NAME": "Smith", "SPBPERS_SSN": "123-45-6789" },
-  "schema": "banner_student",
+  "record": { "lastName": "Smith", "socialSecurityNumber": "123-45-6789" },
+  "schema": "colleague_person",
   "mode": "mask"
 }
 ```
